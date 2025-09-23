@@ -150,5 +150,3 @@ venv.bak/
 .vscode
 *.code-workspace
 .history
-
-CLAUDE.md
