@@ -1,0 +1,502 @@
+# NerdMiner_v2 Test Plan - ESP32-2432S028R Board
+
+## Overview
+This document outlines necessary tests for the NerdMiner_v2 Bitcoin mining firmware project
+specifically for the ESP32-2432S028R (2.8" resistive touch) board.
+Tests are categorized by execution environment and priority level.
+
+Priority Levels:
+- CRITICAL: Must pass before any release
+- HIGH: Important for stability and performance
+- MEDIUM: Nice to have for quality assurance
+- LOW: Future enhancement validation
+
+---
+
+## 0. SMOKE TESTS (Quick Validation - 15 minutes)
+**Purpose: Rapid validation that core functionality works after changes**
+
+### 0.1 Basic System Health [CRITICAL]
+- [ ] Device boots successfully
+  - Test power-on sequence
+  - Verify serial output during boot
+  - Duration: 2 minutes
+
+- [ ] WiFi connection
+  - Connect to test network
+  - Verify IP assignment
+  - Duration: 2 minutes
+
+- [ ] Display and touch basic operation
+  - Test display initialization
+  - Test basic touch response
+  - Duration: 2 minutes
+
+- [ ] Mining core functionality
+  - Connect to test pool
+  - Verify job reception
+  - Submit at least one share
+  - Duration: 5 minutes
+
+- [ ] Memory and stability check
+  - Run for 10 minutes
+  - Monitor for crashes or resets
+  - Check for obvious memory leaks
+  - Duration: 4 minutes
+
+**Note: If any smoke test fails, run full test suite in that category**
+
+---
+
+## 1. UNIT TESTS (No Hardware Required)
+These tests can run on development machines with mocked hardware interfaces.
+
+### 1.1 Cryptographic Functions [CRITICAL]
+- [ ] SHA256 algorithm correctness validation
+  - Test against known test vectors
+  - Verify double SHA256 (SHA256d) implementation
+  - Compare software vs hardware SHA256 results
+  - Test edge cases (empty input, maximum length)
+  - Performance benchmarking
+  - Duration: 30 minutes
+
+- [ ] Hash difficulty validation
+  - Test difficulty calculation from target
+  - Validate hash comparison against targets
+  - Test difficulty conversion functions
+  - Duration: 15 minutes
+
+### 1.2 Utility Functions [CRITICAL]
+- [ ] Hex string conversion functions
+  - String to byte array conversion
+  - Byte array to hex string conversion
+  - Test invalid input handling
+  - Duration: 10 minutes
+
+- [ ] Mining data calculations
+  - Test miner data structure population
+  - Validate nonce generation and incrementation
+  - Test work data preparation
+  - Duration: 20 minutes
+
+- [ ] CRC32 functions
+  - Test CRC32 calculation accuracy
+  - Validate against known test vectors
+  - Duration: 10 minutes
+
+### 1.3 JSON Processing [HIGH]
+- [ ] Stratum message parsing
+  - Test mining.subscribe response parsing
+  - Test mining.authorize response parsing
+  - Test mining.notify job parsing
+  - Test mining.submit share formatting
+  - Test malformed JSON handling
+  - Duration: 45 minutes
+
+- [ ] Configuration JSON handling
+  - Test config file parsing from SD card
+  - Test settings serialization/deserialization
+  - Test invalid configuration handling
+  - Duration: 20 minutes
+
+### 1.4 Network Protocol Logic [HIGH]
+- [ ] Stratum protocol state machine
+  - Test connection establishment flow
+  - Test subscription and authorization sequence
+  - Test job notification handling
+  - Test share submission workflow
+  - Test error response handling
+  - Duration: 60 minutes
+
+---
+
+## 2. INTEGRATION TESTS (Software Only - Mocked Hardware)
+
+### 2.1 Mining Workflow [CRITICAL]
+- [ ] Complete mining cycle simulation
+  - Test pool connection establishment
+  - Test job reception and processing
+  - Test share generation and submission
+  - Test work restart on new jobs
+  - Duration: 45 minutes
+
+- [ ] Error handling workflows
+  - Test pool disconnection recovery
+  - Test invalid job handling
+  - Test network timeout scenarios
+  - Test malformed response handling
+  - Duration: 30 minutes
+
+### 2.2 Configuration Management [HIGH]
+- [ ] Settings persistence
+  - Test NVS (non-volatile storage) operations
+  - Test SD card configuration loading
+  - Test factory reset functionality
+  - Test configuration validation
+  - Duration: 30 minutes
+
+- [ ] WiFi configuration
+  - Test WiFi manager portal setup
+  - Test credential validation
+  - Test connection retry logic
+  - Duration: 25 minutes
+
+### 2.3 Memory Management [HIGH]
+- [ ] Memory leak detection
+  - Test JSON document cleanup
+  - Test string buffer management
+  - Test task memory usage
+  - Duration: 90 minutes
+
+---
+
+## 3. HARDWARE-DEPENDENT TESTS (ESP32-2432S028R Board)
+
+### 3.1 Core Hardware Functions [CRITICAL]
+- [ ] Hardware SHA256 acceleration (ESP32 original)
+  - Test hardware vs software SHA256 performance
+  - Validate hardware SHA256 correctness on ESP32
+  - Measure actual hash rates for ESP32-2432S028R
+  - Test thermal performance during mining
+  - Duration: 60 minutes
+
+- [ ] WiFi connectivity
+  - Test connection to various router types
+  - Test signal strength impact on performance
+  - Test connection stability over time
+  - Test reconnection after signal loss
+  - Duration: 90 minutes
+
+- [ ] Flash storage operations
+  - Test NVS read/write operations
+  - Test SPIFFS file operations
+  - Test storage corruption recovery
+  - Duration: 30 minutes
+
+- [ ] SD Card functionality [HIGH]
+  - Test SD card detection and mounting
+  - Test configuration file loading from SD
+  - Test log file writing capabilities
+  - Test SD card failure recovery
+  - Test file system corruption handling
+  - Duration: 35 minutes
+
+- [ ] Firmware update (OTA) [HIGH]
+  - Test OTA update process
+  - Test recovery from failed updates
+  - Test version validation
+  - Test rollback functionality
+  - Duration: 45 minutes
+
+- [ ] Boot and recovery scenarios [CRITICAL]
+  - Test power-on self-test (POST)
+  - Test factory reset procedures
+  - Test corrupt configuration recovery
+  - Test watchdog timer functionality
+  - Duration: 30 minutes
+
+### 3.2 Display and Input [HIGH]
+- [ ] ILI9341 TFT Display (2.8" 240x320)
+  - Test display initialization and configuration
+  - Test screen rotation and orientation
+  - Test brightness control (0-255 PWM)
+  - Test color inversion functionality
+  - Test display performance impact on mining
+  - Test sprite rendering and font display
+  - Duration: 45 minutes
+
+- [ ] Resistive Touch Interface [CRITICAL]
+  - Test touch calibration accuracy
+  - Test touch coordinate mapping
+  - Test touch responsiveness and pressure sensitivity
+  - Test SPI communication (HSPI interface)
+  - Test touch interrupt handling
+  - Test edge/corner touch accuracy
+  - Test multi-touch rejection
+  - Duration: 40 minutes
+
+- [ ] RGB LED Control [MEDIUM]
+  - Test individual LED control (Red, Green, Blue)
+  - Test LED patterns and brightness
+  - Test LED status indicators during mining
+  - Duration: 15 minutes
+
+### 3.3 Power Management [HIGH]
+- [ ] Power consumption measurement
+  - Measure idle power consumption
+  - Measure mining power consumption
+  - Test display impact on power usage
+  - Duration: 45 minutes
+
+- [ ] Thermal behavior
+  - Test basic temperature monitoring during mining
+  - Test performance under normal operating conditions
+  - Duration: 60 minutes
+
+### 3.4 Real-Time Performance [HIGH]
+- [ ] Task scheduling validation
+  - Test FreeRTOS task priorities
+  - Test task switching overhead
+  - Test real-time mining performance
+  - Test display refresh impact
+  - Duration: 60 minutes
+
+- [ ] Concurrent operation testing [HIGH]
+  - Test mining performance during active display updates
+  - Test touch responsiveness during intensive mining
+  - Test network activity impact on hash rate
+  - Test UI interactions during pool reconnection
+  - Duration: 45 minutes
+
+---
+
+## 4. ESP32-2432S028R SPECIFIC TESTS
+
+### 4.1 Board-Specific Hardware [CRITICAL]
+- [ ] ESP32 (Original) Performance
+  - Test basic mining functionality
+  - Test memory constraints (no PSRAM)
+  - Test dual-core utilization
+  - Test 240MHz CPU frequency
+  - Duration: 60 minutes
+
+### 4.2 Pin Configuration Validation [HIGH]
+- [ ] TFT Display Pins
+  - TFT_MOSI=13, TFT_SCLK=14, TFT_CS=15
+  - TFT_DC=2, TFT_RST=12, TFT_BL=21
+  - Test SPI communication at 55MHz
+  - Duration: 20 minutes
+
+- [ ] Touch Interface Pins
+  - ETOUCH_CS=33, TOUCH_CLK=25
+  - TOUCH_MISO=39, TOUCH_MOSI=32, TOUCH_IRQ=36
+  - Test HSPI interface at 2.5MHz
+  - Duration: 20 minutes
+
+- [ ] LED Control Pins
+  - Test RGB LED functionality
+  - Test LED patterns during different states
+  - Duration: 15 minutes
+
+### 4.3 Platform Configuration [MEDIUM]
+- [ ] PlatformIO Environment
+  - Test ESP32-2432S028R build environment
+  - Validate library dependencies (TFT_eSPI, TFT_eTouch)
+  - Test compilation flags and settings
+  - Duration: 30 minutes
+
+---
+
+## 5. END-TO-END TESTS (Full System Integration)
+
+### 5.1 Mining Pool Integration [CRITICAL]
+- [ ] Real pool connectivity tests
+  - Test with public-pool.io
+  - Test with pool.nerdminers.org
+  - Test pool failover functionality
+  - Duration: 90 minutes
+
+- [ ] Share submission validation
+  - Verify shares are properly formatted
+  - Test share acceptance rates
+  - Test difficulty adjustment handling
+  - Duration: 60 minutes
+
+### 5.2 Long-Running Stability [CRITICAL]
+- [ ] Extended stability testing (OPTIONAL - can be run separately)
+  - 4-hour initial stability test (recommended minimum)
+  - Monitor for memory leaks
+  - Monitor for performance degradation
+  - Monitor for connection drops
+  - Test automatic recovery
+  - Optional: 24-hour continuous operation for production validation
+  - Duration: 4 hours (minimum) / 24+ hours (optional)
+
+- [ ] Network interruption testing
+  - Test WiFi disconnection recovery
+  - Test pool server unavailability
+  - Test DNS resolution failures
+  - Duration: 120 minutes
+
+### 5.3 Firmware Management [HIGH]
+- [ ] Configuration portal testing
+  - Test WiFi AP mode activation
+  - Test web interface functionality
+  - Test parameter modification
+  - Test factory reset capability
+  - Duration: 45 minutes
+
+---
+
+## 6. PERFORMANCE BENCHMARKING
+
+### 6.1 Hash Rate Validation [CRITICAL]
+- [ ] ESP32-2432S028R Performance Baseline
+  - Record hash rates for ESP32 (original)
+  - Compare software vs hardware SHA256
+  - Test impact of display updates on mining
+  - Test impact of touch interface on performance
+  - Test impact of network activity
+  - Establish performance baseline for future comparisons
+  - Duration: 90 minutes
+
+### 6.2 Optimization Validation [HIGH]
+- [ ] Before/after improvement testing
+  - Measure performance gains from optimizations
+  - Validate power efficiency improvements
+  - Test stability of optimized code
+  - Duration: 60 minutes per optimization
+
+### 6.3 Resource Usage Monitoring [MEDIUM]
+- [ ] Memory usage profiling
+  - Monitor heap usage over time
+  - Track stack usage per task
+  - Identify memory fragmentation
+  - Duration: 60 minutes
+
+- [ ] CPU utilization analysis
+  - Monitor task CPU usage
+  - Identify performance bottlenecks
+  - Test load balancing between cores
+  - Duration: 45 minutes
+
+---
+
+## 7. SECURITY TESTING
+
+### 7.1 Network Security [HIGH]
+- [ ] WiFi credential protection
+  - Test credential storage security
+  - Test credential transmission safety
+  - Test against common attacks
+  - Duration: 60 minutes
+
+- [ ] Pool communication security
+  - Test Stratum protocol security
+  - Validate against man-in-the-middle attacks
+  - Test certificate validation (if applicable)
+  - Duration: 45 minutes
+
+### 7.2 Configuration Security [MEDIUM]
+- [ ] Configuration tampering protection
+  - Test against config file modification
+  - Test parameter validation
+  - Test malicious input handling
+  - Duration: 30 minutes
+
+---
+
+## 8. REGRESSION TESTING
+
+### 8.1 Core Functionality [CRITICAL]
+- [ ] Mining operation regression
+  - Verify basic mining still works after changes
+  - Test all supported pools
+  - Verify hash rate consistency
+  - Duration: 60 minutes
+
+### 8.2 Feature Regression [HIGH]
+- [ ] Display and UI regression
+  - Test ILI9341 display still works correctly
+  - Verify resistive touch interactions
+  - Test RGB LED functionality
+  - Test configuration portal
+  - Duration: 45 minutes
+
+- [ ] Network functionality regression
+  - Test WiFi connectivity
+  - Test pool connections
+  - Test error recovery
+  - Duration: 30 minutes
+
+---
+
+## TESTING INFRASTRUCTURE REQUIREMENTS
+
+### Development Environment Setup
+- [ ] Unit test framework integration (Unity recommended)
+- [ ] Mock hardware interface library
+- [ ] Continuous integration pipeline
+- [ ] Automated regression test suite
+- [ ] Performance monitoring dashboard
+
+### Hardware Test Requirements
+- [ ] ESP32-2432S028R board
+- [ ] USB cable for programming and power
+- [ ] WiFi network for connectivity testing
+- [ ] Multimeter for power measurement
+- [ ] Computer with PlatformIO IDE
+- [ ] Optional: Temperature monitoring equipment
+
+### Test Data and Documentation
+- [ ] Known-good test vectors for cryptographic functions
+- [ ] Performance baseline measurements
+- [ ] Test result tracking system
+- [ ] Bug reproduction procedures
+- [ ] Test environment documentation
+
+---
+
+## EXECUTION PRIORITY
+
+### Phase 1: Essential Foundation (Week 1 - ~12 hours)
+**Goal: Get basic mining working reliably**
+- All CRITICAL unit tests (SHA256, hex conversion, mining calculations)
+- Core hardware functionality (SHA256 acceleration, WiFi, flash storage)
+- Basic mining workflow integration tests
+- Boot and recovery scenarios
+- 4-hour stability test
+
+### Phase 2: Core Features (Week 2 - ~15 hours)
+**Goal: Full feature validation and board-specific testing**
+- ESP32-2432S028R specific functionality (display, touch, LEDs)
+- SD card and OTA update testing
+- Memory management and leak detection
+- Real pool connectivity tests
+- Task scheduling and concurrent operations
+
+### Phase 3: Quality Assurance (Week 3 - ~8 hours)
+**Goal: Performance optimization and edge case handling**
+- Performance benchmarking and optimization validation
+- Error handling and recovery scenarios
+- Network interruption testing
+- Security testing
+- Extended thermal and power testing
+
+### Phase 4: Production Readiness (Week 4 - ~5 hours + optional)
+**Goal: Regression testing and long-term validation**
+- Comprehensive regression test suite
+- Configuration portal and management testing
+- Optional: 24-hour continuous operation test
+- Documentation and infrastructure completion
+
+---
+
+## ESTIMATED TOTAL TESTING TIME
+- Unit Tests: ~4 hours
+- Integration Tests: ~3 hours (reduced memory leak testing)
+- Hardware Tests: ~8.5 hours (ESP32-2432S028R + new features)
+- End-to-End Tests: ~9 hours (4-hour stability, reduced network testing)
+- Performance Tests: ~3.5 hours
+- Security Tests: ~2 hours
+- Regression Tests: ~2.5 hours
+
+**Total: ~32.5 hours for core comprehensive testing**
+**Optional: +24 hours for extended stability testing**
+(Focused on single board configuration with practical timeline)
+
+---
+
+## SUCCESS CRITERIA
+- All CRITICAL tests must pass
+- 95% of HIGH priority tests must pass
+- No memory leaks in 24-hour stability test
+- Performance within 5% of baseline measurements for ESP32-2432S028R
+- Touch interface responsive and accurate
+- Display rendering smooth and clear
+- Zero security vulnerabilities identified
+
+---
+
+This test plan should be updated as new features are added or hardware support is expanded.
+Last updated: 2025-01-27
