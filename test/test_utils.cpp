@@ -67,3 +67,52 @@ bool validate_bitcoin_difficulty_target(const uint8_t* target) {
 
     return true;
 }
+
+// Validate JSON string (basic validation)
+bool validate_json_string(const char* json_str) {
+    if (json_str == NULL) return false;
+    if (strlen(json_str) == 0) return false;
+
+    // Basic check: should start with { and end with }
+    size_t len = strlen(json_str);
+    if (json_str[0] != '{' || json_str[len - 1] != '}') {
+        return false;
+    }
+
+    return true;
+}
+
+// Validate hex string (contains only hex characters)
+bool is_valid_hex_string(const char* hex_str) {
+    if (hex_str == NULL) return false;
+
+    size_t len = strlen(hex_str);
+    if (len == 0) return false;
+    if (len % 2 != 0) return false; // Should be even length
+
+    for (size_t i = 0; i < len; i++) {
+        char c = hex_str[i];
+        if (!((c >= '0' && c <= '9') ||
+              (c >= 'a' && c <= 'f') ||
+              (c >= 'A' && c <= 'F'))) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Validate Stratum method name
+bool is_valid_stratum_method(const char* method) {
+    if (method == NULL) return false;
+
+    // Check against known Stratum methods
+    if (strcmp(method, "mining.subscribe") == 0) return true;
+    if (strcmp(method, "mining.authorize") == 0) return true;
+    if (strcmp(method, "mining.notify") == 0) return true;
+    if (strcmp(method, "mining.submit") == 0) return true;
+    if (strcmp(method, "mining.set_difficulty") == 0) return true;
+    if (strcmp(method, "mining.set_extranonce") == 0) return true;
+
+    return false;
+}

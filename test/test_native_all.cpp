@@ -428,6 +428,32 @@ void test_mining_constants(void) {
 #endif
 }
 
+// Forward declarations from other test files
+extern void test_block_header_construction(void);
+extern void test_difficulty_target_comparison(void);
+extern void test_nonce_iteration(void);
+extern void test_mining_cycle_simulation(void);
+extern void test_merkle_root_calculation(void);
+extern void test_mining_performance_measurement(void);
+extern void test_mining_data_initialization(void);
+extern void test_mining_constants_validation(void);
+extern void test_work_distribution(void);
+
+extern void test_json_parsing_basic(void);
+extern void test_json_parsing_invalid(void);
+extern void test_stratum_subscribe_parsing(void);
+extern void test_stratum_authorize_parsing(void);
+extern void test_stratum_notify_parsing(void);
+extern void test_stratum_submit_parsing(void);
+extern void test_stratum_response_parsing(void);
+extern void test_stratum_error_parsing(void);
+extern void test_hex_string_validation(void);
+extern void test_stratum_method_validation(void);
+extern void test_mining_job_structure(void);
+extern void test_subscribe_structure(void);
+extern void test_message_size_limits(void);
+extern void test_error_codes(void);
+
 int main(int argc, char **argv) {
     UNITY_BEGIN();
 
@@ -450,6 +476,33 @@ int main(int argc, char **argv) {
     RUN_TEST(test_difficulty_calculation);
     RUN_TEST(test_nonce_validation);
     RUN_TEST(test_mining_constants);
+
+    // Mining Integration Tests
+    RUN_TEST(test_block_header_construction);
+    RUN_TEST(test_difficulty_target_comparison);
+    RUN_TEST(test_nonce_iteration);
+    RUN_TEST(test_mining_cycle_simulation);
+    RUN_TEST(test_merkle_root_calculation);
+    RUN_TEST(test_mining_performance_measurement);
+    RUN_TEST(test_mining_data_initialization);
+    RUN_TEST(test_mining_constants_validation);
+    RUN_TEST(test_work_distribution);
+
+    // Stratum Protocol Tests
+    RUN_TEST(test_json_parsing_basic);
+    RUN_TEST(test_json_parsing_invalid);
+    RUN_TEST(test_stratum_subscribe_parsing);
+    RUN_TEST(test_stratum_authorize_parsing);
+    RUN_TEST(test_stratum_notify_parsing);
+    RUN_TEST(test_stratum_submit_parsing);
+    RUN_TEST(test_stratum_response_parsing);
+    RUN_TEST(test_stratum_error_parsing);
+    RUN_TEST(test_hex_string_validation);
+    RUN_TEST(test_stratum_method_validation);
+    RUN_TEST(test_mining_job_structure);
+    RUN_TEST(test_subscribe_structure);
+    RUN_TEST(test_message_size_limits);
+    RUN_TEST(test_error_codes);
 
     return UNITY_END();
 }

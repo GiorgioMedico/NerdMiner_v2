@@ -19,4 +19,9 @@ void assert_bytes_equal(const uint8_t* expected, const uint8_t* actual, size_t l
 bool validate_sha256_hash(const uint8_t* hash);
 bool validate_bitcoin_difficulty_target(const uint8_t* target);
 
+// Stratum protocol validation functions
+bool validate_json_string(const char* json_str);
+bool is_valid_hex_string(const char* hex_str);
+bool is_valid_stratum_method(const char* method);
+
 #endif // TEST_UTILS_H

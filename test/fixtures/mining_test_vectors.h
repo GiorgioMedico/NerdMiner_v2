@@ -70,7 +70,7 @@ static const struct test_mining_job TEST_MINING_JOB_2 = {
     .merkle_branches = {
         "982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e",
         "7a2de85b87f0cc2aa9ac1e0d0e5e7c1e8d3c7b5a4e6f9d2c8b1a5e7f9c3d6e8a",
-        "1f8e2d5c3b7a9e6f4d8c1b5a7e9f3d6c8a2e5d7b9f1c4e8a6d3b7f2e9c5d8a10",
+        "1f8e2d5c3b7a9e6f4d8c1b5a7e9f3d6c8a2e5d7b9f1c4e8a6d3b7f2e9c5d8a1f",
         NULL  // Terminator
     },
     .merkle_branch_count = 3,
@@ -122,7 +122,7 @@ static const uint8_t DIFFICULTY_TARGET_HARD[32] = {
 
 // Pool target example (typically easier than network difficulty)
 static const uint8_t POOL_TARGET_EXAMPLE[32] = {
-    0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  // Pool target (easier)
+    0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,  // Pool target (easier)
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF

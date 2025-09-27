@@ -1,5 +1,5 @@
 // Only compile this for embedded tests (not native)
-#ifndef NATIVE_TEST
+#if !defined(NATIVE_TEST) && !defined(HARDWARE_VALIDATION_TEST) && !defined(HARDWARE_SHA256_TEST) && !defined(PERFORMANCE_BENCHMARK_TEST)
 
 #include <unity.h>
 #include <Arduino.h>
@@ -96,4 +96,4 @@ void loop() {
     // Tests run once in setup()
 }
 
-#endif // !NATIVE_TEST
+#endif // !defined(NATIVE_TEST) && !defined(HARDWARE_VALIDATION_TEST) && !defined(HARDWARE_SHA256_TEST) && !defined(PERFORMANCE_BENCHMARK_TEST)
