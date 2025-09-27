@@ -1,6 +1,7 @@
 #include <unity.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "test_utils.h"
 #include "fixtures/sha256_test_vectors.h"
 #include "fixtures/mining_test_vectors.h"
@@ -13,35 +14,169 @@
 #define IRAM_ATTR
 #endif
 
-// Standard SHA256 implementation for reference (simplified)
-void reference_sha256(const uint8_t* input, size_t input_len, uint8_t* output) {
-    // This would normally use a standard SHA256 library like mbedtls
-    // For testing purposes, we'll use known test vectors
-    if (input_len == 0) {
-        // Empty string test vector
-        hex_string_to_bytes(SHA256_TV1_EXPECTED, output, 32);
-    } else if (input_len == 3 && memcmp(input, "abc", 3) == 0) {
-        // "abc" test vector
-        hex_string_to_bytes(SHA256_TV2_EXPECTED, output, 32);
-    } else if (input_len == 14 && memcmp(input, "message digest", 14) == 0) {
-        // "message digest" test vector
-        hex_string_to_bytes(SHA256_TV3_EXPECTED, output, 32);
-    } else if (input_len == 5 && memcmp(input, "hello", 5) == 0) {
-        // "hello" first SHA256: 2cf24dba4f21d4288dce2c3f9da68a93150f56c5bc3e4dc3ac0b3e6a49a2c0d4
-        hex_string_to_bytes("2cf24dba4f21d4288dce2c3f9da68a93150f56c5bc3e4dc3ac0b3e6a49a2c0d4", output, 32);
-    } else if (input_len == 32 && input[0] == 0x2c && input[1] == 0xf2) {
-        // This is the first SHA256 of "hello", now hash it again
-        hex_string_to_bytes(SHA256_DOUBLE_TV1_EXPECTED, output, 32);
-    } else {
-        // Default to zeros for unknown inputs
-        memset(output, 0, 32);
+// Real SHA256 implementation
+// SHA256 constants
+static const uint32_t K[64] = {
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+};
+
+// Right rotate function
+#define ROTR(n, x) (((x) >> (n)) | ((x) << (32 - (n))))
+
+// SHA256 logical functions
+#define CH(x, y, z)    (((x) & (y)) ^ (~(x) & (z)))
+#define MAJ(x, y, z)   (((x) & (y)) ^ ((x) & (z)) ^ ((y) & (z)))
+#define SIGMA0(x)      (ROTR(2, x) ^ ROTR(13, x) ^ ROTR(22, x))
+#define SIGMA1(x)      (ROTR(6, x) ^ ROTR(11, x) ^ ROTR(25, x))
+#define sigma0(x)      (ROTR(7, x) ^ ROTR(18, x) ^ ((x) >> 3))
+#define sigma1(x)      (ROTR(17, x) ^ ROTR(19, x) ^ ((x) >> 10))
+
+// Real SHA256 implementation
+void sha256_real(const uint8_t* input, size_t input_len, uint8_t* output) {
+    // Initial hash values
+    uint32_t H[8] = {
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+    };
+
+    // Pre-processing: adding padding bits and length
+    size_t padded_len = input_len + 1; // +1 for the '1' bit
+    while (padded_len % 64 != 56) {
+        padded_len++;
     }
+    padded_len += 8; // +8 for the 64-bit length
+
+    uint8_t* padded = (uint8_t*)malloc(padded_len);
+    memcpy(padded, input, input_len);
+
+    // Add padding
+    padded[input_len] = 0x80; // append '1' bit
+    memset(padded + input_len + 1, 0, padded_len - input_len - 9);
+
+    // Add length in bits as big-endian 64-bit integer
+    uint64_t bit_len = input_len * 8;
+    for (int i = 0; i < 8; i++) {
+        padded[padded_len - 8 + i] = (bit_len >> (56 - 8 * i)) & 0xff;
+    }
+
+    // Process message in 512-bit chunks
+    for (size_t chunk = 0; chunk < padded_len; chunk += 64) {
+        uint32_t W[64];
+
+        // Copy chunk into first 16 words W[0..15] of the message schedule array
+        for (int i = 0; i < 16; i++) {
+            W[i] = (padded[chunk + i * 4] << 24) |
+                   (padded[chunk + i * 4 + 1] << 16) |
+                   (padded[chunk + i * 4 + 2] << 8) |
+                   (padded[chunk + i * 4 + 3]);
+        }
+
+        // Extend the first 16 words into the remaining 48 words W[16..63]
+        for (int i = 16; i < 64; i++) {
+            W[i] = sigma1(W[i - 2]) + W[i - 7] + sigma0(W[i - 15]) + W[i - 16];
+        }
+
+        // Initialize working variables
+        uint32_t a = H[0], b = H[1], c = H[2], d = H[3];
+        uint32_t e = H[4], f = H[5], g = H[6], h = H[7];
+
+        // Compression function main loop
+        for (int i = 0; i < 64; i++) {
+            uint32_t T1 = h + SIGMA1(e) + CH(e, f, g) + K[i] + W[i];
+            uint32_t T2 = SIGMA0(a) + MAJ(a, b, c);
+            h = g;
+            g = f;
+            f = e;
+            e = d + T1;
+            d = c;
+            c = b;
+            b = a;
+            a = T1 + T2;
+        }
+
+        // Add the compressed chunk to the current hash value
+        H[0] += a; H[1] += b; H[2] += c; H[3] += d;
+        H[4] += e; H[5] += f; H[6] += g; H[7] += h;
+    }
+
+    // Produce the final hash value as a 256-bit number (big-endian)
+    for (int i = 0; i < 8; i++) {
+        output[i * 4] = (H[i] >> 24) & 0xff;
+        output[i * 4 + 1] = (H[i] >> 16) & 0xff;
+        output[i * 4 + 2] = (H[i] >> 8) & 0xff;
+        output[i * 4 + 3] = H[i] & 0xff;
+    }
+
+    free(padded);
+}
+
+// Real SHA256 implementation wrapper
+void reference_sha256(const uint8_t* input, size_t input_len, uint8_t* output) {
+    sha256_real(input, input_len, output);
 }
 
 void reference_sha256_double(const uint8_t* input, size_t input_len, uint8_t* output) {
     uint8_t first_hash[32];
     reference_sha256(input, input_len, first_hash);
     reference_sha256(first_hash, 32, output);
+}
+
+// Validation functions needed by tests
+bool validate_mining_job(const struct test_mining_job* job) {
+    if (!job) return false;
+    if (!job->job_id || strlen(job->job_id) == 0) return false;
+    if (!job->prev_block_hash || strlen(job->prev_block_hash) != 64) return false;
+    if (!job->coinb1 || !job->coinb2) return false;
+    if (!job->nbits || strlen(job->nbits) != 8) return false;
+    if (!job->version || strlen(job->version) != 8) return false;
+    if (!job->ntime || strlen(job->ntime) != 8) return false;
+    if (job->merkle_branch_count < 0 || job->merkle_branch_count > 8) return false;
+
+    // Validate merkle branches
+    for (int i = 0; i < job->merkle_branch_count; i++) {
+        if (!job->merkle_branches[i] || strlen(job->merkle_branches[i]) != 64) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool validate_block_header(const uint8_t* header) {
+    if (!header) return false;
+
+    // Basic validation - check that it's not all zeros
+    bool all_zeros = true;
+    for (int i = 0; i < 80; i++) {
+        if (header[i] != 0) {
+            all_zeros = false;
+            break;
+        }
+    }
+
+    return !all_zeros;
+}
+
+bool validate_nonce_in_range(uint32_t nonce, uint32_t min_nonce, uint32_t max_nonce) {
+    return (nonce >= min_nonce && nonce <= max_nonce);
+}
+
+bool validate_difficulty_calculation(double difficulty, const uint8_t* target) {
+    if (!target) return false;
+    if (difficulty <= 0.0) return false;
+
+    // Very basic validation - check that target is reasonable
+    // First 4 bytes should be small for reasonable difficulties
+    if (target[0] != 0x00 || target[1] != 0x00) return false;
+
+    return true;
 }
 
 // Test functions

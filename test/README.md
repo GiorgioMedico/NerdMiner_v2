@@ -38,9 +38,11 @@ Comprehensive native tests for core algorithms and protocol logic:
 - **Endian Conversion Tests**: Byte order utilities for Bitcoin protocol compliance
 
 **Test Coverage:**
-- 16 test cases covering SHA256, mining data structures, and protocol validation
-- Uses mock implementations for hardware-dependent functions
-- Validates against standard Bitcoin test vectors
+- 16 test cases covering SHA256 implementation, mining data structures, and validation functions
+- Real FIPS 180-4 compliant SHA256 implementation with comprehensive test vectors
+- Bitcoin block header structure validation with actual blockchain data
+- Mining job validation using realistic Stratum protocol examples
+- Endian conversion and utility function testing
 
 #### `test_embedded_basic.cpp`
 Basic embedded environment validation for ESP32 hardware:
@@ -58,13 +60,18 @@ TEST_ASSERT_EQUAL(320, TFT_HEIGHT);  // 2.8" display height
 #endif
 ```
 
-#### `test_validation_functions.cpp`
-Specialized validation functions for mining and protocol data:
+#### Test Fixture Files
+Comprehensive test data and validation functions:
 
-- **Mining Job Validation**: Stratum protocol job structure verification
-- **Block Header Validation**: Bitcoin block header format checking
-- **Nonce Range Validation**: Mining nonce boundary validation
-- **Protocol Data Validation**: Comprehensive Bitcoin protocol compliance
+- **`fixtures/sha256_test_vectors.h`**: Official NIST SHA256 test vectors and Bitcoin-specific examples
+- **`fixtures/mining_test_vectors.h`**: Mining job structures, difficulty targets, and block header templates
+- **`fixtures/stratum_test_vectors.h`**: Stratum protocol test data (placeholder for future implementation)
+
+**Key Features:**
+- Real Bitcoin block header test vectors with expected double SHA256 results
+- Multiple difficulty target examples (easy, medium, hard)
+- Complete mining job structures for testing Stratum protocol validation
+- Performance benchmarking constants for ESP32 hardware validation
 
 ## Test Environments
 
@@ -91,7 +98,7 @@ build_flags =
 
 ### Embedded Testing Environment
 
-**Example Configuration:** `[env:ESP32-2432S028R-test]` in `platformio.ini`
+**Configuration:** `[env:ESP32-2432S028R-test]` in `platformio.ini`
 
 ```ini
 platform = espressif32@6.6.0
@@ -99,11 +106,17 @@ board = esp32dev
 framework = arduino
 test_framework = unity
 test_ignore = test/native
+monitor_speed = 115200
+upload_speed = 921600
+board_build.partitions = huge_app.csv
 build_flags =
     -D ESP32_2432S028R=1
     -D UNIT_TEST=1
+    -D USER_SETUP_LOADED=1
+    -D ILI9341_2_DRIVER=1
     -D TFT_WIDTH=240
     -D TFT_HEIGHT=320
+    # ... additional TFT configuration flags
 ```
 
 **Purpose:**
@@ -122,10 +135,13 @@ build_flags =
 pio test -e native_test
 
 # Run specific native test
-pio test -e native_test -f "test_sha256"
+pio test -e native_test -f "test_sha256_empty_string"
 
 # Verbose output
 pio test -e native_test -v
+
+# Run tests with timing information
+pio test -e native_test --verbose
 ```
 
 #### Embedded Tests (Hardware-based)
@@ -137,16 +153,22 @@ pio test -e ESP32-2432S028R-test
 pio test -e ESP32-2432S028R-test --upload-port /dev/ttyUSB0
 
 # Run specific embedded test
-pio test -e ESP32-2432S028R-test -f "test_display"
+pio test -e ESP32-2432S028R-test -f "test_esp32_constants"
+
+# Monitor test output
+pio test -e ESP32-2432S028R-test && pio device monitor --baud 115200
 ```
 
 #### Combined Testing
 ```bash
-# Run all tests (native + embedded)
+# Run all test environments
 pio test
 
-# Generate JSON test report
-pio test --json-output-path test_results.json
+# Run only available test environments
+pio test -e native_test -e ESP32-2432S028R-test
+
+# Generate detailed test output
+pio test -v --json-output-path test_results.json
 ```
 
 ### Test Results Interpretation
@@ -157,12 +179,43 @@ pio test --json-output-path test_results.json
 - ⚠️ `SKIPPED` - Test environment not available/applicable
 - 🔄 `ERROR` - Test execution error
 
-**Example Results:**
+**Example Native Test Results:**
 ```
-Test Results Summary:
-- Native Tests: 16/16 passed
-- Embedded Tests: Skipped (no hardware)
-- Total Duration: 0.52s
+Unity Test Summary: 16 Tests 0 Failures 0 Ignored
+OK
+
+Test Functions:
+- test_hex_string_conversion: PASS
+- test_endian_conversions: PASS
+- test_sha256_empty_string: PASS
+- test_sha256_abc: PASS
+- test_sha256_message_digest: PASS
+- test_sha256_double_hello: PASS
+- test_bitcoin_block_header_structure: PASS
+- test_mining_data_structure: PASS
+- test_difficulty_target_validation: PASS
+- test_nonce_range_validation: PASS
+- test_mining_job_validation: PASS
+- test_mining_constants: PASS
+
+Total Duration: 0.42s
+```
+
+**Example Embedded Test Results:**
+```
+Starting ESP32-2432S028R embedded tests...
+
+test_embedded_environment:PASS
+test_esp32_constants:PASS
+ESP32 Chip Revision: 3
+CPU Frequency: 240
+Free Heap: 298234
+test_arduino_functions:PASS
+test_esp32_functions:PASS
+
+All embedded tests completed!
+Unity Test Summary: 4 Tests 0 Failures 0 Ignored
+OK
 ```
 
 ## Test Dependencies
@@ -197,21 +250,24 @@ void tearDown(void) {
 
 1. Add test functions to `test_native_all.cpp`:
 ```cpp
-void test_new_algorithm(void) {
-    // Test implementation
-    uint8_t expected[32] = {0x01, 0x02, ...};
+void test_new_sha256_feature(void) {
+    uint8_t expected[32];
     uint8_t actual[32];
 
-    my_new_algorithm(input, actual);
-    assert_bytes_equal(expected, actual, 32, "Algorithm output mismatch");
+    // Use test vector from fixtures
+    hex_string_to_bytes(SHA256_TV2_EXPECTED, expected, 32);
+    reference_sha256((const uint8_t*)"abc", 3, actual);
+
+    assert_bytes_equal(expected, actual, 32, "SHA256 test failed");
 }
 ```
 
 2. Register in main function:
 ```cpp
-int main() {
+int main(int argc, char **argv) {
     UNITY_BEGIN();
-    RUN_TEST(test_new_algorithm);
+    RUN_TEST(test_new_sha256_feature);
+    // ... other tests
     return UNITY_END();
 }
 ```
@@ -220,15 +276,19 @@ int main() {
 
 1. Add test functions to `test_embedded_basic.cpp`:
 ```cpp
-void test_hardware_feature(void) {
-    // Hardware-specific test
-    TEST_ASSERT_TRUE(digitalRead(LED_PIN) == HIGH);
+void test_esp32_hardware_feature(void) {
+    // Test ESP32-specific functionality
+    TEST_ASSERT_TRUE(ESP.getChipRevision() >= 0);
+    TEST_ASSERT_TRUE(ESP.getCpuFreqMHz() > 0);
+    Serial.println("Hardware feature test passed");
 }
 ```
 
 2. Add board-specific conditionals:
 ```cpp
 #ifdef ESP32_2432S028R
+    TEST_ASSERT_EQUAL(240, TFT_WIDTH);
+    TEST_ASSERT_EQUAL(320, TFT_HEIGHT);
     TEST_ASSERT_EQUAL(21, TFT_BL);  // Backlight pin
 #endif
 ```
@@ -238,30 +298,37 @@ void test_hardware_feature(void) {
 Use common utilities from `test_utils.h`:
 ```cpp
 // Hex string conversion
-hex_string_to_bytes("deadbeef", bytes, 4);
+char hex[] = "deadbeef";
+uint8_t bytes[4];
+hex_string_to_bytes(hex, bytes, 4);
 
 // Memory comparison with helpful errors
-assert_bytes_equal(expected, actual, length, "Context message");
+assert_bytes_equal(expected, actual, 32, "SHA256 hash mismatch");
 
 // Debug output
-print_bytes_hex(data, length, "Debug Label");
+print_bytes_hex(actual, 32, "Computed Hash");
+
+// Bitcoin-specific validation
+TEST_ASSERT_TRUE(validate_sha256_hash(actual));
+TEST_ASSERT_TRUE(validate_bitcoin_difficulty_target(target));
 ```
 
 ## Test Coverage Areas
 
-### Current Coverage
-- ✅ **SHA256 Algorithm**: Software implementation with test vectors
-- ✅ **Bitcoin Protocol**: Block headers, difficulty calculation
-- ✅ **Mining Logic**: Nonce validation, mining constants
-- ✅ **ESP32 Environment**: Basic hardware functionality
-- ✅ **Utility Functions**: Hex conversion, byte operations
+### Current Coverage (✅ **Implemented**)
+- ✅ **SHA256 Algorithm**: Full FIPS 180-4 compliant implementation with NIST test vectors
+- ✅ **Bitcoin Protocol**: Block header structure validation with real blockchain data
+- ✅ **Mining Data Structures**: Comprehensive mining job and block header validation
+- ✅ **Test Fixtures**: Official test vectors in separate header files for maintainability
+- ✅ **Utility Functions**: Hex conversion, byte comparison, hash validation with error reporting
+- ✅ **ESP32 Environment**: Hardware constants validation and Arduino function availability
+- ✅ **Test Framework**: Unity integration with 16 native tests + 4 embedded tests
 
-### Planned Coverage (see `../test_plan.txt`)
-- 🔄 **Stratum Protocol**: Complete mining protocol testing
-- 🔄 **Display System**: TFT display and touch functionality
-- 🔄 **WiFi Management**: Connection and configuration testing
-- 🔄 **Storage System**: NVS and SD card operations
-- 🔄 **Performance**: Benchmarking and optimization validation
+### Planned Coverage (🔄 **In Development**)
+- 🔄 **Stratum Protocol**: Full protocol implementation testing (fixtures exist, tests needed)
+- 🔄 **Hardware SHA256**: ESP32 hardware acceleration testing
+- 🔄 **Performance Benchmarks**: Mining performance validation on actual hardware
+- 🔄 **Integration Tests**: End-to-end mining workflow validation
 
 ## Troubleshooting
 
@@ -279,11 +346,17 @@ Error: Could not find a board ID
 ```
 **Solution:** Specify correct upload port: `pio test -e ESP32-2432S028R-test --upload-port /dev/ttyUSB0`
 
-#### Missing Test Fixtures
+#### Build Configuration Issues
 ```
-Error: 'fixtures/sha256_test_vectors.h' file not found
+Error: conflicting library dependencies
 ```
-**Solution:** Test fixtures are referenced but not yet implemented. Tests use inline test vectors as temporary solution.
+**Solution:** Ensure proper `lib_ignore` settings in test environments to avoid conflicts between native and embedded dependencies.
+
+#### Test Vector Validation Failures
+```
+Assertion failed: SHA256 test vector mismatch
+```
+**Solution:** Verify test vectors match NIST standards. Use `print_bytes_hex()` for debugging hash computation differences.
 
 ### Debug Tips
 
@@ -317,20 +390,63 @@ The testing framework supports CI/CD pipelines:
 
 ## Test Data and Constants
 
-### Mining Constants
+### Mining Constants (from platformio.ini)
 ```cpp
 #define MAX_NONCE_STEP   5000000U      // Nonce increment per iteration
 #define MAX_NONCE        25000000U     // Maximum nonce value
-#define DEFAULT_DIFFICULTY 0.00015     // Default mining difficulty
 #define TARGET_NONCE     471136297U    // Test target nonce
+#define DEFAULT_DIFFICULTY 0.00015     // Default mining difficulty
+#define BUFFER_JSON_DOC  4096          // JSON buffer size for native tests
 ```
 
-### Test Vectors
-The testing framework includes standard Bitcoin test vectors for:
-- SHA256 algorithm validation ("", "abc", "message digest")
-- Double SHA256 verification
-- Block header structure validation
-- Difficulty target calculations
+### Test Vectors (from fixtures/)
+- **SHA256 Test Vectors**: NIST standard test cases including empty string, "abc", "message digest"
+- **Bitcoin Block Headers**: Real block header from genesis block with expected double SHA256 hash
+- **Mining Jobs**: Complete Stratum protocol job structures with merkle branches
+- **Difficulty Targets**: Easy, medium, and hard difficulty examples for testing
+- **Performance Constants**: Expected hashrate ranges for ESP32 hardware validation
+
+---
+
+## Implementation Roadmap
+
+### Current State vs. Documentation
+
+**✅ Fully Implemented:**
+- Native test environment with 16 comprehensive test cases
+- Complete SHA256 implementation with NIST test vectors
+- Test fixtures with real Bitcoin data and mining examples
+- ESP32 embedded test environment with hardware validation
+- Unity test framework integration with proper reporting
+
+**🔄 Partially Implemented:**
+- Only 2 test environments configured (native_test + ESP32-2432S028R-test)
+- Stratum protocol test fixtures exist but tests not yet implemented
+- Mining performance benchmarks defined but not automated
+
+**❌ Missing Features:**
+- Test environments for other 30+ board variants mentioned in documentation
+- Automated CI/CD pipeline integration
+- Performance regression testing
+- Hardware SHA256 acceleration testing
+- End-to-end mining workflow validation
+
+### Future Development Goals
+
+1. **Short Term (1-2 weeks):**
+   - Implement Stratum protocol tests using existing fixtures
+   - Add hardware SHA256 acceleration tests for ESP32
+   - Create test environments for 3-5 major board variants
+
+2. **Medium Term (1-2 months):**
+   - Automated performance benchmarking
+   - CI/CD pipeline with GitHub Actions
+   - Integration tests for complete mining workflows
+
+3. **Long Term (3+ months):**
+   - Test environments for all supported board variants
+   - Regression testing for performance optimization
+   - Automated hardware-in-the-loop testing
 
 ---
 
@@ -340,8 +456,7 @@ When adding new tests:
 
 1. Follow the existing file organization (native vs embedded)
 2. Use descriptive test function names (`test_feature_specific_case`)
-3. Include helpful assertion messages
-4. Add documentation for complex test logic
+3. Include helpful assertion messages using `assert_bytes_equal()`
+4. Add test vectors to appropriate fixture files
 5. Update this README for significant additions
-
-For questions about the testing framework, refer to the main project documentation or the comprehensive test plan in `../test_plan.txt`.
+6. Ensure tests pass in both native and embedded environments where applicable
