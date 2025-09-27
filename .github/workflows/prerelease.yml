@@ -6,8 +6,55 @@ on:
       - prerelease
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio-test
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install PlatformIO Core
+        run: pip install --upgrade platformio
+      - name: Run Native Tests
+        run: |
+          echo "Running native test environment..."
+          pio test -e native_test --verbose
+      - name: Run Stratum Protocol Tests (Native)
+        run: |
+          echo "Running Stratum protocol tests..."
+          pio test -e native_test -f "*stratum*" --verbose
+      - name: Run Mining Integration Tests (Native)
+        run: |
+          echo "Running mining integration tests..."
+          pio test -e native_test -f "*mining*" --verbose
+      - name: Generate Test Report
+        run: |
+          echo "Generating test coverage report..."
+          pio test -e native_test --json-output-path test_results.json || true
+          if [ -f test_results.json ]; then
+            echo "Test results generated successfully"
+            cat test_results.json
+          else
+            echo "No test results file generated"
+          fi
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.sha }}
+          path: |
+            test_results.json
+            .pio/build/native_test/
+          if-no-files-found: warn
+
   build:
     runs-on: ubuntu-latest
+    needs: test
     outputs:
       version: ${{ steps.version_step.outputs.version }}
     steps:
