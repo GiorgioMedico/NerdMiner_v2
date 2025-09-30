@@ -1,5 +1,4 @@
 pio device monitor -p /dev/ttyUSB0 -b 115200
-pio run -e sha256_test_ESP32-2432S028R -t upload
 
 pio run -e ESP32-2432S028R -t upload 
 
