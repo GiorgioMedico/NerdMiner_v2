@@ -16,13 +16,22 @@
 
 
 uint8_t hex(char ch);
+uint32_t swab32(uint32_t v);
 
-int to_byte_array(const char *in, size_t in_size, uint8_t *out);
+int to_byte_array(const char *in, size_t out_size, uint8_t *out);
+void swap_endian_words(const char* hex_words, uint8_t* output);
+void reverse_bytes(uint8_t* data, size_t len);
+
 double le256todouble(const void *target);
 double diff_from_target(void *target);
 bool isSha256Valid(const void* sha256);
+
+void getRandomExtranonce2(int extranonce2_size, char *extranonce2);
+void getNextExtranonce2(int extranonce2_size, char *extranonce2);
+
+miner_data init_miner_data(void);
 miner_data calculateMiningData(mining_subscribe& mWorker, mining_job mJob);
-bool checkValid(unsigned char* hash, unsigned char* target);
+bool checkValid(const uint8_t* hash, const uint8_t* target);
 void suffix_string(double val, char *buf, size_t bufsiz, int sigdigits);
 
 uint32_t crc32_reset();

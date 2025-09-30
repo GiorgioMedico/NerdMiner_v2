@@ -50,7 +50,7 @@ void test_to_byte_array() {
     uint8_t expected[] = {0xde, 0xad, 0xbe, 0xef};
     uint8_t result[4];
 
-    int converted = to_byte_array(hex_string, strlen(hex_string), result);
+    int converted = to_byte_array(hex_string, sizeof(result), result);
 
     TEST_ASSERT_EQUAL_INT(4, converted);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, result, 4);
@@ -653,39 +653,101 @@ void test_utils_diff_from_target() {
 void test_utils_check_valid_hash() {
     Serial.println("\n=== Testing Hash Validation ===");
 
-    // Note: The checkValid function has a bug in line 128: memcpy(diff_target, &target, 32)
-    // should be memcpy(diff_target, target, 32). This causes unpredictable behavior.
-    // We'll test that the function at least executes without crashing.
+    // Test Case 1: Hash clearly meets target (many leading zeros)
+    uint8_t valid_hash[32] = {
+        0x00, 0x00, 0x00, 0x01, 0x23, 0x45, 0x67, 0x89,
+        0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+        0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+        0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89
+    };
+    uint8_t easy_target[32] = {
+        0x00, 0x00, 0x0f, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+    };
 
-    // Create a simple test case
-    unsigned char hash[32];
-    unsigned char target[32];
+    bool result = checkValid(valid_hash, easy_target);
+    TEST_ASSERT_TRUE(result);
+    Serial.println("  Test 1: Valid hash meets target - PASS");
 
-    // Set up all zeros for both to ensure comparison succeeds
-    memset(hash, 0x00, 32);
-    memset(target, 0x00, 32);
+    // Test Case 2: Hash exceeds target (all high values)
+    uint8_t invalid_hash[32];
+    memset(invalid_hash, 0xff, 32);
 
-    bool result = checkValid(hash, target);
+    result = checkValid(invalid_hash, easy_target);
+    TEST_ASSERT_FALSE(result);
+    Serial.println("  Test 2: Invalid hash exceeds target - PASS");
 
-    // Print debug info
-    Serial.print("Hash (first 4 bytes): ");
-    for(int i = 0; i < 4; i++) {
-        Serial.printf("%02x", hash[i]);
-    }
-    Serial.println("");
-    Serial.print("Target (first 4 bytes): ");
-    for(int i = 0; i < 4; i++) {
-        Serial.printf("%02x", target[i]);
-    }
-    Serial.println("");
-    Serial.print("Validation result: ");
-    Serial.println(result ? "VALID" : "INVALID");
+    // Test Case 3: Boundary condition - hash equals target exactly
+    uint8_t boundary_hash[32] = {
+        0x00, 0x00, 0x0f, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+    };
+    uint8_t boundary_target[32];
+    memcpy(boundary_target, boundary_hash, 32);
 
-    // The function executed without crashing, which is what we can test reliably
-    // given the bug in the implementation
-    TEST_ASSERT_TRUE(true); // Function executed successfully
+    result = checkValid(boundary_hash, boundary_target);
+    TEST_ASSERT_TRUE(result);
+    Serial.println("  Test 3: Hash equals target exactly - PASS");
 
-    Serial.println("✓ Hash validation tests passed (function execution verified)");
+    // Test Case 4: Hash just barely meets target (one bit difference)
+    uint8_t barely_valid[32] = {
+        0x00, 0x00, 0x0f, 0xff, 0xff, 0xff, 0xff, 0xfe,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+    };
+
+    result = checkValid(barely_valid, easy_target);
+    TEST_ASSERT_TRUE(result);
+    Serial.println("  Test 4: Hash barely meets target - PASS");
+
+    // Test Case 5: Hash just barely exceeds target
+    uint8_t barely_invalid[32] = {
+        0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
+
+    result = checkValid(barely_invalid, easy_target);
+    TEST_ASSERT_FALSE(result);
+    Serial.println("  Test 5: Hash barely exceeds target - PASS");
+
+    // Test Case 6: Null pointer handling
+    result = checkValid(nullptr, easy_target);
+    TEST_ASSERT_FALSE(result);
+    Serial.println("  Test 6: Null hash pointer handling - PASS");
+
+    result = checkValid(valid_hash, nullptr);
+    TEST_ASSERT_FALSE(result);
+    Serial.println("  Test 7: Null target pointer handling - PASS");
+
+    // Test Case 7: Real-world difficulty test (Bitcoin difficulty 1)
+    // Target for difficulty 1: 0x00000000ffff0000000000000000000000000000000000000000000000000000
+    uint8_t diff1_target[32] = {
+        0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
+
+    // Hash that would meet difficulty 1
+    uint8_t diff1_valid_hash[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78,
+        0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78,
+        0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78,
+        0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78
+    };
+
+    result = checkValid(diff1_valid_hash, diff1_target);
+    TEST_ASSERT_TRUE(result);
+    Serial.println("  Test 8: Real-world difficulty 1 valid hash - PASS");
+
+    Serial.println("✓ Hash validation tests passed (all 8 test cases)");
 }
 
 void test_utils_swab32() {
@@ -768,12 +830,53 @@ void test_utils_get_next_extranonce2() {
     Serial.println("✓ Sequential extranonce2 generation tests passed");
 }
 
+void test_utils_init_miner_data() {
+    Serial.println("\n=== Testing Init Miner Data ===");
+
+    miner_data mMiner = init_miner_data();
+
+    // Verify all arrays are zero-initialized
+    bool all_target_zero = true;
+    bool all_pooltarget_zero = true;
+    bool all_merkle_zero = true;
+    bool all_blockheader_zero = true;
+
+    for (size_t i = 0; i < 32; i++) {
+        if (mMiner.bytearray_target[i] != 0) all_target_zero = false;
+        if (mMiner.bytearray_pooltarget[i] != 0) all_pooltarget_zero = false;
+        if (mMiner.merkle_result[i] != 0) all_merkle_zero = false;
+    }
+
+    for (size_t i = 0; i < 128; i++) {
+        if (mMiner.bytearray_blockheader[i] != 0) all_blockheader_zero = false;
+    }
+
+    TEST_ASSERT_TRUE(all_target_zero);
+    TEST_ASSERT_TRUE(all_pooltarget_zero);
+    TEST_ASSERT_TRUE(all_merkle_zero);
+    TEST_ASSERT_TRUE(all_blockheader_zero);
+
+    Serial.println("  bytearray_target: all zeros - PASS");
+    Serial.println("  bytearray_pooltarget: all zeros - PASS");
+    Serial.println("  merkle_result: all zeros - PASS");
+    Serial.println("  bytearray_blockheader: all zeros - PASS");
+
+    // Verify structure sizes
+    TEST_ASSERT_EQUAL_size_t(32, sizeof(mMiner.bytearray_target));
+    TEST_ASSERT_EQUAL_size_t(32, sizeof(mMiner.bytearray_pooltarget));
+    TEST_ASSERT_EQUAL_size_t(32, sizeof(mMiner.merkle_result));
+    TEST_ASSERT_EQUAL_size_t(128, sizeof(mMiner.bytearray_blockheader));
+
+    Serial.println("  Structure sizes verified - PASS");
+
+    Serial.println("✓ Init miner data tests passed");
+}
+
 void test_utils_calculate_mining_data_basic() {
-    Serial.println("\n=== Testing Calculate Mining Data (Basic) ===");
+    Serial.println("\n=== Testing Calculate Mining Data ===");
 
-    // Note: This is a simplified test of calculateMiningData
-    // Full testing requires mock stratum data, which is complex
-
+    // Test Case 1: Basic job without merkle branches
+    Serial.println("\n  Test 1: Basic job (no merkle branches)");
     mining_subscribe mWorker;
     mWorker.extranonce1 = "00000000";
     mWorker.extranonce2_size = 4;
@@ -790,33 +893,444 @@ void test_utils_calculate_mining_data_basic() {
     mJob.ntime = "4c92809d";
     mJob.clean_jobs = true;
 
-    // Empty merkle branch for simplicity
-    // In real scenarios, this would contain merkle hashes
-
-    // This will execute the function and verify it doesn't crash
     miner_data mMiner = calculateMiningData(mWorker, mJob);
 
     // Verify basic structure integrity
     TEST_ASSERT_EQUAL_size_t(32, sizeof(mMiner.bytearray_target));
     TEST_ASSERT_EQUAL_size_t(128, sizeof(mMiner.bytearray_blockheader));
 
-    // Verify block header has version (first 4 bytes should be non-zero after swapping)
-    bool has_version = false;
-    for(int i = 0; i < 4; i++) {
-        if(mMiner.bytearray_blockheader[i] != 0) {
-            has_version = true;
+    // Verify nbits expansion (1d00ffff should expand to difficulty 1 target)
+    // Expected target: 0x00000000ffff0000000000000000000000000000000000000000000000000000
+    uint8_t expected_target[32] = {
+        0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected_target, mMiner.bytearray_target, 32);
+    Serial.println("    nbits expansion verified - PASS");
+
+    // Verify block header has version (should be 0x01000000 little-endian)
+    TEST_ASSERT_EQUAL_UINT8(0x01, mMiner.bytearray_blockheader[0]);
+    TEST_ASSERT_EQUAL_UINT8(0x00, mMiner.bytearray_blockheader[1]);
+    TEST_ASSERT_EQUAL_UINT8(0x00, mMiner.bytearray_blockheader[2]);
+    TEST_ASSERT_EQUAL_UINT8(0x00, mMiner.bytearray_blockheader[3]);
+    Serial.println("    Block header version verified - PASS");
+
+    // Verify merkle result is not all zeros (coinbase was hashed)
+    bool has_merkle_data = false;
+    for (size_t i = 0; i < 32; i++) {
+        if (mMiner.merkle_result[i] != 0) {
+            has_merkle_data = true;
             break;
         }
     }
-    TEST_ASSERT_TRUE(has_version);
+    TEST_ASSERT_TRUE(has_merkle_data);
+    Serial.println("    Merkle root calculation verified - PASS");
 
-    Serial.print("Block header (first 16 bytes): ");
-    for(int i = 0; i < 16; i++) {
-        Serial.printf("%02x", mMiner.bytearray_blockheader[i]);
+    // Test Case 2: Job with merkle branches
+    Serial.println("\n  Test 2: Job with merkle branches");
+    StaticJsonDocument<512> doc2;  // Backing storage for JsonArray
+    mining_job mJob2;
+    mJob2.merkle_branch = doc2.to<JsonArray>();  // Initialize JsonArray
+    mJob2.job_id = "test_job_2";
+    mJob2.prev_block_hash = "0000000000000000000000000000000000000000000000000000000000000001";
+    mJob2.coinb1 = "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff08";
+    mJob2.coinb2 = "ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000";
+    mJob2.version = "00000001";
+    mJob2.nbits = "1d00ffff";
+    mJob2.ntime = "4c92809d";
+    mJob2.clean_jobs = true;
+
+    // Add two merkle branches using ArduinoJson add() method
+    mJob2.merkle_branch.add("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+    mJob2.merkle_branch.add("fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321");
+
+    miner_data mMiner2 = calculateMiningData(mWorker, mJob2);
+
+    // Verify merkle branches were processed
+    TEST_ASSERT_EQUAL_INT(2, mJob2.merkle_branch.size());
+    Serial.println("    Merkle branches processed - PASS");
+
+    // Merkle result should be different from first test (different merkle branches)
+    bool merkle_results_different = false;
+    for (size_t i = 0; i < 32; i++) {
+        if (mMiner.merkle_result[i] != mMiner2.merkle_result[i]) {
+            merkle_results_different = true;
+            break;
+        }
     }
-    Serial.println();
+    TEST_ASSERT_TRUE(merkle_results_different);
+    Serial.println("    Merkle root with branches differs - PASS");
 
-    Serial.println("✓ Calculate mining data (basic) tests passed");
+    // Test Case 3: Different extranonce2 sizes
+    Serial.println("\n  Test 3: Different extranonce2 sizes");
+
+    // Size 2 (4 hex chars)
+    mWorker.extranonce2_size = 2;
+    miner_data mMiner_size2 = calculateMiningData(mWorker, mJob);
+    TEST_ASSERT_TRUE(isSha256Valid(mMiner_size2.merkle_result));
+    Serial.println("    extranonce2_size = 2: PASS");
+
+    // Size 8 (16 hex chars)
+    mWorker.extranonce2_size = 8;
+    miner_data mMiner_size8 = calculateMiningData(mWorker, mJob);
+    TEST_ASSERT_TRUE(isSha256Valid(mMiner_size8.merkle_result));
+    Serial.println("    extranonce2_size = 8: PASS");
+
+    // Test Case 4: Different nbits values
+    Serial.println("\n  Test 4: Different nbits values");
+
+    // Higher difficulty: 1a05db8b
+    mJob.nbits = "1a05db8b";
+    mWorker.extranonce2_size = 4;
+    miner_data mMiner_high_diff = calculateMiningData(mWorker, mJob);
+
+    // Target should be smaller (higher difficulty)
+    // Compare first non-zero bytes
+    bool higher_difficulty_confirmed = false;
+    for (int i = 0; i < 32; i++) {
+        if (expected_target[i] != mMiner_high_diff.bytearray_target[i]) {
+            if (i < 4) {
+                // First 4 bytes should be smaller for higher difficulty
+                higher_difficulty_confirmed = true;
+            }
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(higher_difficulty_confirmed ||
+                     memcmp(expected_target, mMiner_high_diff.bytearray_target, 32) != 0);
+    Serial.println("    Different nbits produces different target - PASS");
+
+    Serial.println("\n✓ Calculate mining data tests passed (all 4 test cases)");
+}
+
+void test_utils_edge_cases() {
+    Serial.println("\n=== Testing Utils Edge Cases ===");
+
+    // Test Case 1: to_byte_array with insufficient buffer
+    Serial.println("\n  Test 1: to_byte_array buffer boundaries");
+    uint8_t small_buffer[2];
+    int result = to_byte_array("deadbeef", 2, small_buffer);
+    TEST_ASSERT_EQUAL_INT(2, result); // Should only convert what fits
+    TEST_ASSERT_EQUAL_UINT8(0xde, small_buffer[0]);
+    TEST_ASSERT_EQUAL_UINT8(0xad, small_buffer[1]);
+    Serial.println("    Insufficient buffer handling - PASS");
+
+    // Test Case 2: to_byte_array null pointer handling
+    result = to_byte_array(nullptr, 4, small_buffer);
+    TEST_ASSERT_EQUAL_INT(0, result);
+    Serial.println("    Null input string handling - PASS");
+
+    result = to_byte_array("dead", 4, nullptr);
+    TEST_ASSERT_EQUAL_INT(0, result);
+    Serial.println("    Null output buffer handling - PASS");
+
+    result = to_byte_array("dead", 0, small_buffer);
+    TEST_ASSERT_EQUAL_INT(0, result);
+    Serial.println("    Zero buffer size handling - PASS");
+
+    // Test Case 3: to_byte_array with odd-length hex string
+    uint8_t odd_buffer[3];
+    result = to_byte_array("12345", 3, odd_buffer);
+    TEST_ASSERT_EQUAL_INT(3, result);
+    TEST_ASSERT_EQUAL_UINT8(0x01, odd_buffer[0]); // "1" becomes 0x01
+    TEST_ASSERT_EQUAL_UINT8(0x23, odd_buffer[1]); // "23"
+    TEST_ASSERT_EQUAL_UINT8(0x45, odd_buffer[2]); // "45"
+    Serial.println("    Odd-length hex string handling - PASS");
+
+    // Test Case 4: swap_endian_words edge cases
+    Serial.println("\n  Test 2: swap_endian_words edge cases");
+
+    // Non-8-aligned input (should return early)
+    uint8_t swap_output[4];
+    memset(swap_output, 0xAA, 4);
+    swap_endian_words("1234567", swap_output); // 7 chars, not aligned
+    // Buffer should remain unchanged
+    TEST_ASSERT_EQUAL_UINT8(0xAA, swap_output[0]);
+    Serial.println("    Non-8-aligned input handling - PASS");
+
+    // Null pointer handling
+    swap_endian_words(nullptr, swap_output);
+    swap_endian_words("12345678", nullptr);
+    Serial.println("    Null pointer handling - PASS");
+
+    // Test Case 5: reverse_bytes edge cases
+    Serial.println("\n  Test 3: reverse_bytes edge cases");
+
+    // Size 0 - should not modify
+    uint8_t data[4] = {1, 2, 3, 4};
+    reverse_bytes(data, 0);
+    TEST_ASSERT_EQUAL_UINT8(1, data[0]);
+    TEST_ASSERT_EQUAL_UINT8(2, data[1]);
+    Serial.println("    Size 0 handling - PASS");
+
+    // Size 1 - should not modify
+    reverse_bytes(data, 1);
+    TEST_ASSERT_EQUAL_UINT8(1, data[0]);
+    Serial.println("    Size 1 handling - PASS");
+
+    // Odd length
+    uint8_t odd_data[5] = {1, 2, 3, 4, 5};
+    reverse_bytes(odd_data, 5);
+    TEST_ASSERT_EQUAL_UINT8(5, odd_data[0]);
+    TEST_ASSERT_EQUAL_UINT8(4, odd_data[1]);
+    TEST_ASSERT_EQUAL_UINT8(3, odd_data[2]); // Middle stays
+    TEST_ASSERT_EQUAL_UINT8(2, odd_data[3]);
+    TEST_ASSERT_EQUAL_UINT8(1, odd_data[4]);
+    Serial.println("    Odd-length array handling - PASS");
+
+    // Test Case 6: getRandomExtranonce2 invalid sizes
+    Serial.println("\n  Test 4: getRandomExtranonce2 edge cases");
+
+    char extranonce[20];
+    memset(extranonce, 0xAA, 20);
+
+    // Size 0
+    getRandomExtranonce2(0, extranonce);
+    TEST_ASSERT_EQUAL_STRING("", extranonce);
+    Serial.println("    Size 0 handling - PASS");
+
+    // Size > 8
+    memset(extranonce, 0xAA, 20);
+    getRandomExtranonce2(9, extranonce);
+    TEST_ASSERT_EQUAL_STRING("", extranonce);
+    Serial.println("    Size > 8 handling - PASS");
+
+    // Null pointer (should not crash)
+    getRandomExtranonce2(4, nullptr);
+    Serial.println("    Null pointer handling - PASS");
+
+    // Test Case 7: getNextExtranonce2 edge cases
+    Serial.println("\n  Test 5: getNextExtranonce2 edge cases");
+
+    // Null pointer
+    getNextExtranonce2(4, nullptr);
+    Serial.println("    Null pointer handling - PASS");
+
+    // Invalid sizes
+    char test_extra[20] = "12345678";
+    getNextExtranonce2(0, test_extra);
+    TEST_ASSERT_EQUAL_STRING("12345678", test_extra); // Unchanged
+    Serial.println("    Size 0 handling - PASS");
+
+    strcpy(test_extra, "12345678");
+    getNextExtranonce2(9, test_extra);
+    TEST_ASSERT_EQUAL_STRING("12345678", test_extra); // Unchanged
+    Serial.println("    Size > 8 handling - PASS");
+
+    // Test Case 8: le256todouble with extreme values
+    Serial.println("\n  Test 6: le256todouble edge cases");
+
+    // All zeros
+    uint8_t zero_target[32];
+    memset(zero_target, 0, 32);
+    double result_double = le256todouble(zero_target);
+    TEST_ASSERT_EQUAL_DOUBLE(0.0, result_double);
+    Serial.println("    All zeros handling - PASS");
+
+    // All 0xFF (maximum value)
+    uint8_t max_target[32];
+    memset(max_target, 0xFF, 32);
+    result_double = le256todouble(max_target);
+    TEST_ASSERT_TRUE(result_double > 0.0);
+    Serial.println("    Maximum value handling - PASS");
+
+    Serial.println("\n✓ Edge case tests passed (all 8 test groups)");
+}
+
+void test_utils_buffer_overflow_protection() {
+    Serial.println("\n=== Testing Buffer Overflow Protection ===");
+
+    // Test Case 1: calculateMiningData with oversized coinbase
+    Serial.println("\n  Test 1: Oversized coinbase handling");
+
+    mining_subscribe mWorker;
+    mWorker.extranonce1 = "00";
+    mWorker.extranonce2_size = 4;
+    strcpy(mWorker.wName, "test");
+    strcpy(mWorker.wPass, "x");
+
+    mining_job mJob;
+    mJob.job_id = "overflow_test";
+    mJob.prev_block_hash = "0000000000000000000000000000000000000000000000000000000000000000";
+
+    // Create an extremely long coinb1 that would exceed buffer when combined
+    String long_coinb1 = "";
+    for (int i = 0; i < 300; i++) {
+        long_coinb1 += "aa"; // 600 hex chars = 300 bytes
+    }
+    mJob.coinb1 = long_coinb1;
+    mJob.coinb2 = "ff";
+    mJob.version = "00000001";
+    mJob.nbits = "1d00ffff";
+    mJob.ntime = "4c92809d";
+    mJob.clean_jobs = true;
+
+    // Should handle gracefully without crash
+    miner_data result = calculateMiningData(mWorker, mJob);
+
+    // Function should return safely (even if data may be invalid/truncated)
+    TEST_ASSERT_TRUE(true); // Did not crash
+    Serial.println("    Oversized coinbase handled safely - PASS");
+
+    // Test Case 2: Normal size after overflow test (verify recovery)
+    Serial.println("\n  Test 2: Recovery after overflow");
+
+    mJob.coinb1 = "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff08";
+    mJob.coinb2 = "ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000";
+
+    miner_data result2 = calculateMiningData(mWorker, mJob);
+
+    // Should work normally after overflow condition
+    TEST_ASSERT_TRUE(isSha256Valid(result2.merkle_result));
+    Serial.println("    Normal operation after overflow - PASS");
+
+    // Test Case 3: Maximum valid merkle branches
+    Serial.println("\n  Test 3: Maximum merkle branches");
+
+    // Initialize JsonArray with backing storage for 10 merkle branches
+    StaticJsonDocument<1024> doc_merkle;
+    mJob.merkle_branch = doc_merkle.to<JsonArray>();
+
+    // Add many merkle branches (stress test)
+    for (int i = 0; i < 10; i++) {
+        mJob.merkle_branch.add("1111111111111111111111111111111111111111111111111111111111111111");
+    }
+
+    miner_data result3 = calculateMiningData(mWorker, mJob);
+
+    // Should handle without crash
+    TEST_ASSERT_TRUE(true);
+    TEST_ASSERT_TRUE(isSha256Valid(result3.merkle_result));
+    Serial.println("    Multiple merkle branches handled - PASS");
+
+    Serial.println("\n✓ Buffer overflow protection tests passed (all 3 test cases)");
+}
+
+void test_utils_mining_workflow_integration() {
+    Serial.println("\n=== Testing Complete Mining Workflow Integration ===");
+
+    // Setup complete mining workflow with realistic data
+    Serial.println("\n  Setting up mining workflow with realistic pool data");
+
+    mining_subscribe mWorker;
+    mWorker.extranonce1 = "f8000000";
+    mWorker.extranonce2_size = 4;
+    strcpy(mWorker.wName, "nerdminer");
+    strcpy(mWorker.wPass, "x");
+
+    StaticJsonDocument<256> doc_job;  // Backing storage for JsonArray
+    mining_job mJob;
+    mJob.merkle_branch = doc_job.to<JsonArray>();  // Initialize JsonArray
+    mJob.job_id = "integration_test";
+    // Simplified realistic prev_block_hash
+    mJob.prev_block_hash = "00000000000000000001b2c5e3a7f9d8e6c4b2a0987654321fedcba098765432";
+    mJob.coinb1 = "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff20";
+    mJob.coinb2 = "0d2f6e6f64655374726174756d2f00000000014a355009000000001976a914";
+    mJob.version = "20000000";
+    mJob.nbits = "1a05db8b"; // Realistic difficulty
+    mJob.ntime = "65432100";
+    mJob.clean_jobs = true;
+
+    // Add a single merkle branch using ArduinoJson add() method
+    mJob.merkle_branch.add("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890");
+
+    Serial.println("  Step 1: Calculate mining data from stratum job");
+    miner_data mMiner = calculateMiningData(mWorker, mJob);
+
+    // Verify mining data structure
+    TEST_ASSERT_EQUAL_size_t(32, sizeof(mMiner.bytearray_target));
+    TEST_ASSERT_EQUAL_size_t(128, sizeof(mMiner.bytearray_blockheader));
+    Serial.println("    Mining data structure verified - PASS");
+
+    // Step 2: Verify target is valid (not all zeros)
+    Serial.println("  Step 2: Verify target validity");
+    bool target_valid = isSha256Valid(mMiner.bytearray_target);
+    TEST_ASSERT_TRUE(target_valid);
+    Serial.println("    Target is valid - PASS");
+
+    // Step 3: Verify merkle result is valid
+    Serial.println("  Step 3: Verify merkle root calculation");
+    bool merkle_valid = isSha256Valid(mMiner.merkle_result);
+    TEST_ASSERT_TRUE(merkle_valid);
+    Serial.println("    Merkle root is valid - PASS");
+
+    // Step 4: Create a hash that meets the target (simulated valid solution)
+    Serial.println("  Step 4: Test hash validation against target");
+
+    // Create a hash with many leading zeros (would meet low difficulty)
+    uint8_t test_hash_valid[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x23, 0x45,
+        0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45,
+        0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45,
+        0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45
+    };
+
+    bool is_valid_share = checkValid(test_hash_valid, mMiner.bytearray_target);
+    TEST_ASSERT_TRUE(is_valid_share);
+    Serial.println("    Valid hash meets target - PASS");
+
+    // Step 5: Test invalid hash (doesn't meet target)
+    Serial.println("  Step 5: Test invalid hash rejection");
+
+    uint8_t test_hash_invalid[32];
+    memset(test_hash_invalid, 0xFF, 32); // All high values
+
+    bool is_invalid_share = checkValid(test_hash_invalid, mMiner.bytearray_target);
+    TEST_ASSERT_FALSE(is_invalid_share);
+    Serial.println("    Invalid hash rejected - PASS");
+
+    // Step 6: Verify block header structure integrity
+    Serial.println("  Step 6: Verify block header structure");
+
+    // Check version field (first 4 bytes, little-endian)
+    TEST_ASSERT_EQUAL_UINT8(0x00, mMiner.bytearray_blockheader[0]);
+    TEST_ASSERT_EQUAL_UINT8(0x00, mMiner.bytearray_blockheader[1]);
+    TEST_ASSERT_EQUAL_UINT8(0x00, mMiner.bytearray_blockheader[2]);
+    TEST_ASSERT_EQUAL_UINT8(0x20, mMiner.bytearray_blockheader[3]);
+    Serial.println("    Block header version correct - PASS");
+
+    // Verify nonce field exists at position 76-79 (should be 0x00000000 initially)
+    TEST_ASSERT_EQUAL_UINT8(0x00, mMiner.bytearray_blockheader[76]);
+    TEST_ASSERT_EQUAL_UINT8(0x00, mMiner.bytearray_blockheader[77]);
+    TEST_ASSERT_EQUAL_UINT8(0x00, mMiner.bytearray_blockheader[78]);
+    TEST_ASSERT_EQUAL_UINT8(0x00, mMiner.bytearray_blockheader[79]);
+    Serial.println("    Block header nonce field present - PASS");
+
+    // Step 7: Test workflow with different difficulty
+    Serial.println("  Step 7: Test workflow with different difficulty");
+
+    mJob.nbits = "1d00ffff"; // Difficulty 1 (easier target)
+    miner_data mMiner_easy = calculateMiningData(mWorker, mJob);
+
+    // Easy target should be larger than hard target (numerically)
+    bool targets_different = false;
+    for (int i = 0; i < 32; i++) {
+        if (mMiner.bytearray_target[i] != mMiner_easy.bytearray_target[i]) {
+            targets_different = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(targets_different);
+    Serial.println("    Different difficulties produce different targets - PASS");
+
+    // The same hash might meet easier target
+    bool meets_easy_target = checkValid(test_hash_valid, mMiner_easy.bytearray_target);
+    TEST_ASSERT_TRUE(meets_easy_target);
+    Serial.println("    Valid hash meets easier target - PASS");
+
+    // Step 8: Complete workflow validation
+    Serial.println("  Step 8: Complete workflow validation");
+
+    // Full workflow: Job received → Data calculated → Target expanded → Hash validated
+    TEST_ASSERT_TRUE(isSha256Valid(mMiner_easy.bytearray_target));
+    TEST_ASSERT_TRUE(isSha256Valid(mMiner_easy.merkle_result));
+    TEST_ASSERT_EQUAL_size_t(128, sizeof(mMiner_easy.bytearray_blockheader));
+
+    Serial.println("    Complete workflow integrity verified - PASS");
+
+    Serial.println("\n✓ Mining workflow integration tests passed (all 8 steps)");
 }
 
 #endif // UTILS_EXTENDED_TEST
@@ -1158,7 +1672,11 @@ void setup() {
     RUN_TEST(test_utils_swab32);
     RUN_TEST(test_utils_get_random_extranonce2);
     RUN_TEST(test_utils_get_next_extranonce2);
+    RUN_TEST(test_utils_init_miner_data);
     RUN_TEST(test_utils_calculate_mining_data_basic);
+    RUN_TEST(test_utils_edge_cases);
+    RUN_TEST(test_utils_buffer_overflow_protection);
+    RUN_TEST(test_utils_mining_workflow_integration);
     #endif
 
     UNITY_END();
