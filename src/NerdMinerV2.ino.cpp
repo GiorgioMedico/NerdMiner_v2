@@ -85,11 +85,13 @@ void setup()
 
   // Setup the buttons
   #if defined(PIN_BUTTON_1) && !defined(PIN_BUTTON_2) //One button device
-    button1.setPressMs(5*SECOND_MS);
-    button1.attachClick(switchToNextScreen);
-    button1.attachDoubleClick(alternateScreenRotation);
-    button1.attachLongPressStart(reset_configuration);
-    button1.attachMultiClick(alternateScreenState);
+    // button1.setPressMs(5*SECOND_MS);
+    // button1.attachClick(switchToNextScreen);
+    // button1.attachDoubleClick(alternateScreenRotation);
+    // button1.attachLongPressStart(reset_configuration);
+    // button1.attachMultiClick(alternateScreenState);
+    button1.setPressMs(2*SECOND_MS);
+    button1.attachClick(alternateScreenState);
   #endif
 
   #if defined(PIN_BUTTON_1) && defined(PIN_BUTTON_2) //Button 1 of two button device

@@ -41,6 +41,7 @@ void test_hex_conversion() {
     TEST_ASSERT_EQUAL_UINT8(10, hex('A'));
     TEST_ASSERT_EQUAL_UINT8(15, hex('f'));
     TEST_ASSERT_EQUAL_UINT8(15, hex('F'));
+    TEST_ASSERT_EQUAL_UINT8(0, hex('g'));
 
     Serial.println("✓ Hex conversion tests passed");
 }
@@ -55,6 +56,23 @@ void test_to_byte_array() {
     TEST_ASSERT_EQUAL_INT(4, converted);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, result, 4);
 
+    const char* odd_hex_string = "abc";
+    uint8_t odd_expected[] = {0x0a, 0xbc};
+    uint8_t odd_result[2] = {0};
+    int odd_converted = to_byte_array(odd_hex_string, sizeof(odd_result), odd_result);
+
+    TEST_ASSERT_EQUAL_INT(2, odd_converted);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(odd_expected, odd_result, 2);
+
+    uint8_t truncated_result[1];
+    int truncated_converted = to_byte_array(hex_string, sizeof(truncated_result), truncated_result);
+
+    TEST_ASSERT_EQUAL_INT(1, truncated_converted);
+    TEST_ASSERT_EQUAL_UINT8(0xde, truncated_result[0]);
+
+    TEST_ASSERT_EQUAL_INT(0, to_byte_array(nullptr, sizeof(result), result));
+    TEST_ASSERT_EQUAL_INT(0, to_byte_array(hex_string, 0, result));
+
     Serial.println("✓ Byte array conversion tests passed");
 }
 
@@ -65,15 +83,18 @@ void test_crc32_functions() {
     crc = crc32_add(crc, test_data, strlen(test_data));
     uint32_t final_crc = crc32_finish(crc);
 
-    // CRC32 should be deterministic
-    TEST_ASSERT_NOT_EQUAL_UINT32(0, final_crc);
+    // CRC32 with 0xFFFFFFFF seed should match ESP ROM helper behaviour
+    TEST_ASSERT_EQUAL_UINT32(0xE33E8552, final_crc);
 
-    // Test same input gives same result
-    uint32_t crc2 = crc32_reset();
-    crc2 = crc32_add(crc2, test_data, strlen(test_data));
-    uint32_t final_crc2 = crc32_finish(crc2);
+    uint32_t same_crc = crc32_finish(crc32_add(crc32_reset(), test_data, strlen(test_data)));
+    TEST_ASSERT_EQUAL_UINT32(final_crc, same_crc);
 
-    TEST_ASSERT_EQUAL_UINT32(final_crc, final_crc2);
+    uint32_t zero_len_crc = crc32_add(crc32_reset(), test_data, 0);
+    TEST_ASSERT_EQUAL_UINT32(crc32_reset(), zero_len_crc);
+
+    uint32_t null_crc = crc32_add(crc32_reset(), nullptr, strlen(test_data));
+    TEST_ASSERT_EQUAL_UINT32(crc32_reset(), null_crc);
+
 
     Serial.println("✓ CRC32 function tests passed");
 }
@@ -81,45 +102,40 @@ void test_crc32_functions() {
 void test_suffix_string() {
     char buffer[32];
 
-    // Test with hash rate values
-    suffix_string(1000.0, buffer, sizeof(buffer), 3);
-    Serial.print("1000.0 -> ");
-    Serial.println(buffer);
+    suffix_string(999.0, buffer, sizeof(buffer), 0);
+    TEST_ASSERT_EQUAL_STRING("999.00", buffer);
 
-    suffix_string(1500000.0, buffer, sizeof(buffer), 3);
-    Serial.print("1500000.0 -> ");
-    Serial.println(buffer);
+    suffix_string(1000.0, buffer, sizeof(buffer), 0);
+    TEST_ASSERT_EQUAL_STRING("1.000K", buffer);
 
-    // Just verify buffer is not empty and null-terminated
-    TEST_ASSERT_NOT_EQUAL('\0', buffer[0]);
-    TEST_ASSERT_EQUAL('\0', buffer[strlen(buffer)]);
+    suffix_string(1500000.0, buffer, sizeof(buffer), 0);
+    TEST_ASSERT_EQUAL_STRING("1.500M", buffer);
+
+    suffix_string(0.0005, buffer, sizeof(buffer), 0);
+    TEST_ASSERT_EQUAL_STRING("0.0000", buffer);
+
+    suffix_string(123.0, buffer, sizeof(buffer), 3);
+    TEST_ASSERT_EQUAL_STRING(" 123", buffer);
+
+    char tiny_buffer[4];
+    memset(tiny_buffer, 'x', sizeof(tiny_buffer));
+    suffix_string(1000.0, tiny_buffer, sizeof(tiny_buffer), 0);
+    TEST_ASSERT_EQUAL_UINT8('\0', tiny_buffer[0]);
 
     Serial.println("✓ Suffix string tests passed");
 }
 
 void test_sha256_validation_basic() {
-    // Create a test hash with leading zeros (valid Bitcoin hash pattern)
-    unsigned char valid_hash[32] = {
-        0x00, 0x00, 0x00, 0x01, 0x23, 0x45, 0x67, 0x89,
-        0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
-        0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
-        0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89
-    };
+    unsigned char valid_hash[32] = {0};
+    unsigned char non_zero_hash[32];
+    unsigned char zero_hash[32] = {0};
 
-    // Create an invalid hash (all high values)
-    unsigned char invalid_hash[32];
-    memset(invalid_hash, 0xff, 32);
+    valid_hash[31] = 0x01;
+    memset(non_zero_hash, 0xff, sizeof(non_zero_hash));
 
-    bool is_valid = isSha256Valid(valid_hash);
-    bool is_invalid = isSha256Valid(invalid_hash);
-
-    Serial.print("Valid hash result: ");
-    Serial.println(is_valid);
-    Serial.print("Invalid hash result: ");
-    Serial.println(is_invalid);
-
-    // At minimum, the function should work without crashing
-    TEST_ASSERT_TRUE(true); // Basic functionality test
+    TEST_ASSERT_TRUE(isSha256Valid(valid_hash));
+    TEST_ASSERT_TRUE(isSha256Valid(non_zero_hash));
+    TEST_ASSERT_FALSE(isSha256Valid(zero_hash));
 
     Serial.println("✓ SHA256 validation tests passed");
 }
