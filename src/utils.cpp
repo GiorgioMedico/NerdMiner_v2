@@ -4,6 +4,7 @@
 #include "mining.h"
 #include "stratum.h"
 #include "mbedtls/sha256.h"
+#include "esp_random.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -123,54 +124,65 @@ bool isSha256Valid(const void* sha256)
 
 
 bool checkValid(unsigned char* hash, unsigned char* target) {
-  bool valid = true;
   unsigned char diff_target[32];
-  memcpy(diff_target, &target, 32);
+  memcpy(diff_target, target, 32);
   //convert target to little endian for comparison
   reverse_bytes(diff_target, 32);
 
-  for(uint8_t i=31; i>=0; i--) {
-    if(hash[i] > diff_target[i]) {
-      valid = false;
+  for (int i = 31; i >= 0; i--) {
+    if (hash[i] > diff_target[i]) {
+      return false;
+    }
+    if (hash[i] < diff_target[i]) {
       break;
     }
   }
 
   #ifdef DEBUG_MINING
-  if (valid) {
-    Serial.print("\tvalid : ");
-    for (size_t i = 0; i < 32; i++)
-        Serial.printf("%02x ", hash[i]);
-    Serial.println();
-  }
+  Serial.print("\tvalid : ");
+  for (size_t i = 0; i < 32; i++)
+      Serial.printf("%02x ", hash[i]);
+  Serial.println();
   #endif
-  return valid;
+
+  return true;
 }
+
 
 /**
  * get random extranonce2
+ * Uses ESP32 hardware random number generator for better randomness
+ *
+ * @param extranonce2_size Size in bytes (1-8 supported)
+ * @param extranonce2 Output buffer (must be at least extranonce2_size*2+1 bytes)
 */
 void getRandomExtranonce2(int extranonce2_size, char *extranonce2) {
-  uint8_t b0, b1, b2, b3;
+  // Validate input size
+  if (extranonce2_size <= 0 || extranonce2_size > 8) {
+    extranonce2[0] = '\0';
+    return;
+  }
 
-  b0 = rand() % 256;
-  b1 = rand() % 256;
-  b2 = rand() % 256;
-  b3 = rand() % 256;
+  // Use ESP32 hardware RNG to fill the bytes
+  uint8_t random_bytes[8];
+  for (int i = 0; i < extranonce2_size && i < 8; i++) {
+    random_bytes[i] = (uint8_t)(esp_random() & 0xFF);
+  }
 
-  unsigned long extranonce2_number = b3 << 24 | b2 <<  16 | b1 << 8 | b0;
+  // Convert bytes to hex string with leading zeros
+  for (int i = 0; i < extranonce2_size; i++) {
+    sprintf(extranonce2 + (i * 2), "%02x", random_bytes[i]);
+  }
 
-  char format[] = "%00x";
-
-  sprintf(&format[1], "%02dx", extranonce2_size * 2);
-  sprintf(extranonce2, format, extranonce2_number);
+  // Ensure null termination
+  extranonce2[extranonce2_size * 2] = '\0';
 }
 
 /**
  * get linear extranonce2
 */
 void getNextExtranonce2(int extranonce2_size, char *extranonce2) {
-  unsigned long extranonce2_number = strtoul(extranonce2, NULL, 10);
+  unsigned long extranonce2_number = strtoul(extranonce2, NULL, 16);
 
   extranonce2_number++;
 
