@@ -311,25 +311,26 @@ void test_stratum_verify_payload() {
 
     // Test valid payload
     String valid_payload = "{\"id\":1,\"method\":\"mining.notify\"}";
-    bool result = verifyPayload(&valid_payload);
+    bool result = verifyPayload(valid_payload);
     TEST_ASSERT_TRUE(result);
 
     // Test empty payload
     String empty_payload = "";
-    result = verifyPayload(&empty_payload);
+    result = verifyPayload(empty_payload);
     TEST_ASSERT_FALSE(result);
 
     // Test whitespace only payload
     String whitespace_payload = "   \t\n   ";
-    result = verifyPayload(&whitespace_payload);
+    result = verifyPayload(whitespace_payload);
     TEST_ASSERT_FALSE(result);
 
-    // Test payload with leading/trailing whitespace (should be trimmed and valid)
+    // Test payload with leading/trailing whitespace
     String trimmed_payload = "  {\"id\":1}  ";
-    result = verifyPayload(&trimmed_payload);
+    result = verifyPayload(trimmed_payload);
     TEST_ASSERT_TRUE(result);
-    // Verify it was actually trimmed
-    TEST_ASSERT_EQUAL_STRING("{\"id\":1}", trimmed_payload.c_str());
+    // Note: verifyPayload no longer modifies the input (const reference)
+    // Original string remains unchanged
+    TEST_ASSERT_EQUAL_STRING("  {\"id\":1}  ", trimmed_payload.c_str());
 
     Serial.println("✓ Stratum payload verification tests passed");
 }
@@ -388,6 +389,26 @@ void test_stratum_method_parsing() {
     Serial.println("✓ Stratum method parsing tests passed");
 }
 
+void test_stratum_check_error() {
+    Serial.println("\n=== Testing Stratum Error Handling ===");
+
+    StaticJsonDocument<BUFFER_JSON_DOC> error_doc;
+    JsonArray error_array = error_doc.createNestedArray("error");
+    error_array.add(25);
+    error_array.add("authorization failed");
+    TEST_ASSERT_TRUE(checkError(error_doc));
+
+    StaticJsonDocument<BUFFER_JSON_DOC> no_error_doc;
+    no_error_doc["result"] = true;
+    TEST_ASSERT_FALSE(checkError(no_error_doc));
+
+    StaticJsonDocument<BUFFER_JSON_DOC> empty_error_doc;
+    empty_error_doc.createNestedArray("error");
+    TEST_ASSERT_FALSE(checkError(empty_error_doc));
+
+    Serial.println("✓ Stratum error handling tests passed");
+}
+
 void test_stratum_extract_id() {
     Serial.println("\n=== Testing ID Extraction ===");
 
@@ -440,7 +461,7 @@ void test_stratum_parse_mining_subscribe() {
     Serial.println("\n=== Testing Parse Mining Subscribe ===");
 
     // Test valid subscribe response
-    String valid_response = "{\"id\":1,\"result\":[[\"mining.set_difficulty\",\"00000001\"],\"08000002\",4],\"error\":null}";
+    String valid_response = "{\"id\":1,\"result\":[[[\"mining.set_difficulty\",\"00000001\"],[\"mining.notify\",\"00000002\"]],\"08000002\",4],\"error\":null}";
     mining_subscribe mSub;
 
     bool result = parse_mining_subscribe(valid_response, mSub);
@@ -455,7 +476,7 @@ void test_stratum_parse_mining_subscribe() {
     Serial.print("  extranonce2_size: "); Serial.println(mSub.extranonce2_size);
 
     // Test with empty extranonce1 (should fail validation)
-    String invalid_response = "{\"id\":1,\"result\":[[\"mining.set_difficulty\",\"00000001\"],\"\",4],\"error\":null}";
+    String invalid_response = "{\"id\":1,\"result\":[[[\"mining.set_difficulty\",\"00000001\"]],\"\",4],\"error\":null}";
     mining_subscribe mSub2;
     result = parse_mining_subscribe(invalid_response, mSub2);
     // Function returns true but caller checks extranonce1.length()
@@ -525,6 +546,7 @@ void test_stratum_parse_mining_notify() {
         "]}";
 
     mining_job mJob;
+    mJob.merkle_branch_len = 0;
     bool result = parse_mining_notify(valid_notify, mJob);
 
     TEST_ASSERT_TRUE(result);
@@ -536,7 +558,7 @@ void test_stratum_parse_mining_notify() {
     TEST_ASSERT_EQUAL_STRING("1d00ffff", mJob.nbits.c_str());
     TEST_ASSERT_EQUAL_STRING("4c92809d", mJob.ntime.c_str());
     TEST_ASSERT_TRUE(mJob.clean_jobs);
-    TEST_ASSERT_EQUAL_INT(0, mJob.merkle_branch.size());
+    TEST_ASSERT_EQUAL_INT(0, mJob.merkle_branch_len);
 
     Serial.print("  job_id: "); Serial.println(mJob.job_id);
     Serial.print("  version: "); Serial.println(mJob.version);
@@ -559,8 +581,58 @@ void test_stratum_parse_mining_notify() {
     mining_job mJob2;
     result = parse_mining_notify(notify_with_merkle, mJob2);
     TEST_ASSERT_TRUE(result);
-    TEST_ASSERT_EQUAL_INT(2, mJob2.merkle_branch.size());
+    TEST_ASSERT_EQUAL_INT(2, mJob2.merkle_branch_len);
     TEST_ASSERT_FALSE(mJob2.clean_jobs);
+
+    // Test merkle branch exceeding configured limit
+    StaticJsonDocument<BUFFER_JSON_DOC> oversized_doc;
+    oversized_doc["id"] = nullptr;
+    oversized_doc["method"] = "mining.notify";
+    JsonArray oversized_params = oversized_doc.createNestedArray("params");
+    oversized_params.add("job3");
+    oversized_params.add("0000000000000000");
+    oversized_params.add("cb1");
+    oversized_params.add("cb2");
+    JsonArray oversized_merkle = oversized_params.createNestedArray();
+    for (int i = 0; i < MAX_MERKLE_BRANCHES + 1; ++i) {
+        oversized_merkle.add("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    }
+    oversized_params.add("00000002");
+    oversized_params.add("1d00ffff");
+    oversized_params.add("4c92809f");
+    oversized_params.add(true);
+    String oversized_payload;
+    serializeJson(oversized_doc, oversized_payload);
+
+    mining_job oversized_job;
+    result = parse_mining_notify(oversized_payload, oversized_job);
+    TEST_ASSERT_FALSE(result);
+
+    // Test string length validation on job_id
+    String long_job_id;
+    for (size_t i = 0; i < MAX_JOB_ID_LEN + 1; ++i) {
+        long_job_id += 'a';
+    }
+
+    StaticJsonDocument<BUFFER_JSON_DOC> long_doc;
+    long_doc["id"] = nullptr;
+    long_doc["method"] = "mining.notify";
+    JsonArray long_params = long_doc.createNestedArray("params");
+    long_params.add(long_job_id);
+    long_params.add("0000000000000000");
+    long_params.add("cb1");
+    long_params.add("cb2");
+    long_params.createNestedArray(); // empty merkle branch
+    long_params.add("00000002");
+    long_params.add("1d00ffff");
+    long_params.add("4c92809f");
+    long_params.add(false);
+    String long_payload;
+    serializeJson(long_doc, long_payload);
+
+    mining_job long_job;
+    result = parse_mining_notify(long_payload, long_job);
+    TEST_ASSERT_FALSE(result);
 
     // Test malformed JSON
     String malformed = "{\"method\":\"mining.notify\",\"params\":[";
@@ -946,9 +1018,8 @@ void test_utils_calculate_mining_data_basic() {
 
     // Test Case 2: Job with merkle branches
     Serial.println("\n  Test 2: Job with merkle branches");
-    StaticJsonDocument<512> doc2;  // Backing storage for JsonArray
     mining_job mJob2;
-    mJob2.merkle_branch = doc2.to<JsonArray>();  // Initialize JsonArray
+    mJob2.merkle_branch_len = 0;
     mJob2.job_id = "test_job_2";
     mJob2.prev_block_hash = "0000000000000000000000000000000000000000000000000000000000000001";
     mJob2.coinb1 = "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff08";
@@ -958,14 +1029,15 @@ void test_utils_calculate_mining_data_basic() {
     mJob2.ntime = "4c92809d";
     mJob2.clean_jobs = true;
 
-    // Add two merkle branches using ArduinoJson add() method
-    mJob2.merkle_branch.add("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
-    mJob2.merkle_branch.add("fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321");
+    // Add two merkle branches
+    mJob2.merkle_branch[0] = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+    mJob2.merkle_branch[1] = "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321";
+    mJob2.merkle_branch_len = 2;
 
     miner_data mMiner2 = calculateMiningData(mWorker, mJob2);
 
     // Verify merkle branches were processed
-    TEST_ASSERT_EQUAL_INT(2, mJob2.merkle_branch.size());
+    TEST_ASSERT_EQUAL_INT(2, mJob2.merkle_branch_len);
     Serial.println("    Merkle branches processed - PASS");
 
     // Merkle result should be different from first test (different merkle branches)
@@ -1205,14 +1277,11 @@ void test_utils_buffer_overflow_protection() {
     // Test Case 3: Maximum valid merkle branches
     Serial.println("\n  Test 3: Maximum merkle branches");
 
-    // Initialize JsonArray with backing storage for 10 merkle branches
-    StaticJsonDocument<1024> doc_merkle;
-    mJob.merkle_branch = doc_merkle.to<JsonArray>();
-
     // Add many merkle branches (stress test)
     for (int i = 0; i < 10; i++) {
-        mJob.merkle_branch.add("1111111111111111111111111111111111111111111111111111111111111111");
+        mJob.merkle_branch[i] = "1111111111111111111111111111111111111111111111111111111111111111";
     }
+    mJob.merkle_branch_len = 10;
 
     miner_data result3 = calculateMiningData(mWorker, mJob);
 
@@ -1236,9 +1305,8 @@ void test_utils_mining_workflow_integration() {
     strcpy(mWorker.wName, "nerdminer");
     strcpy(mWorker.wPass, "x");
 
-    StaticJsonDocument<256> doc_job;  // Backing storage for JsonArray
     mining_job mJob;
-    mJob.merkle_branch = doc_job.to<JsonArray>();  // Initialize JsonArray
+    mJob.merkle_branch_len = 0;
     mJob.job_id = "integration_test";
     // Simplified realistic prev_block_hash
     mJob.prev_block_hash = "00000000000000000001b2c5e3a7f9d8e6c4b2a0987654321fedcba098765432";
@@ -1249,8 +1317,9 @@ void test_utils_mining_workflow_integration() {
     mJob.ntime = "65432100";
     mJob.clean_jobs = true;
 
-    // Add a single merkle branch using ArduinoJson add() method
-    mJob.merkle_branch.add("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890");
+    // Add a single merkle branch
+    mJob.merkle_branch[0] = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+    mJob.merkle_branch_len = 1;
 
     Serial.println("  Step 1: Calculate mining data from stratum job");
     miner_data mMiner = calculateMiningData(mWorker, mJob);
@@ -1672,6 +1741,7 @@ void setup() {
     RUN_TEST(test_stratum_verify_payload);
     RUN_TEST(test_stratum_mining_subscribe_init);
     RUN_TEST(test_stratum_method_parsing);
+    RUN_TEST(test_stratum_check_error);
     RUN_TEST(test_stratum_extract_id);
     RUN_TEST(test_stratum_constants);
     RUN_TEST(test_stratum_parse_mining_subscribe);

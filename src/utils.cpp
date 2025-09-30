@@ -401,8 +401,8 @@ miner_data calculateMiningData(mining_subscribe& mWorker, mining_job mJob){
     memcpy(mMiner.merkle_result, shaResult, sizeof(shaResult));
     
     byte merkle_concatenated[32 * 2];
-    for (size_t k=0; k < mJob.merkle_branch.size(); k++) {
-        const char* merkle_element = (const char*) mJob.merkle_branch[k];
+    for (size_t k = 0; k < mJob.merkle_branch_len; k++) {
+        const char* merkle_element = mJob.merkle_branch[k].c_str();
         uint8_t bytearray[32];
         size_t res = to_byte_array(merkle_element, sizeof(bytearray), bytearray);
         if (res != sizeof(bytearray))
