@@ -144,7 +144,7 @@ void m5stickCDriver_GlobalHashScreen(unsigned long mElapsed)
   M5.Lcd.setTextColor(ORANGE,BLACK);
   M5.Lcd.print("Diff    ");
   M5.Lcd.setTextColor(GRAY,BLACK);
-  M5.Lcd.print(data.netwrokDifficulty.c_str());
+  M5.Lcd.print(data.networkDifficulty.c_str());
 
   M5.Lcd.setCursor(5, 49);
   M5.Lcd.setTextColor(LIGHTBLUE,BLACK);

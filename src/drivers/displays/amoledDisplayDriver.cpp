@@ -184,7 +184,7 @@ void amoledDisplay_GlobalHashScreen(unsigned long mElapsed)
   background.setFreeFont(FSS12);
   background.setTextDatum(TR_DATUM);
   background.setTextColor(0x9C92);
-  background.drawString(data.netwrokDifficulty.c_str(), X(302), Y(88), GFXFF);
+  background.drawString(data.networkDifficulty.c_str(), X(302), Y(88), GFXFF);
 
   // Print Global Hashrate
   render.setFontSize(FS(17));

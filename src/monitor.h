@@ -110,7 +110,7 @@ typedef struct {
   String economyFee;
   String minimumFee;
 #endif
-  String netwrokDifficulty;
+  String networkDifficulty;
   String globalHashRate;
   String blockHeight;
   float progressPercent;

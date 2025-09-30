@@ -392,7 +392,7 @@ void esp32_2432S028R_GlobalHashScreen(unsigned long mElapsed)
   background.setFreeFont(FSS9);
   background.setTextDatum(TR_DATUM);
   background.setTextColor(0x9C92);
-  background.drawString(data.netwrokDifficulty.c_str(), 302-160, 85, GFXFF);
+  background.drawString(data.networkDifficulty.c_str(), 302-160, 85, GFXFF);
   // Push prepared background to screen
   background.pushSprite(160, 3);
   // Delete sprite to free the memory heap

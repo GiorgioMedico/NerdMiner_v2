@@ -393,7 +393,7 @@ coin_data getCoinData(unsigned long mElapsed)
   data.minimumFee = String(gData.minimumFee);
 #endif
   data.halfHourFee = String(gData.halfHourFee) + " sat/vB";
-  data.netwrokDifficulty = gData.difficulty;
+  data.networkDifficulty = gData.difficulty;
   data.globalHashRate = gData.globalHash;
   data.blockHeight = getBlockHeight();
 
