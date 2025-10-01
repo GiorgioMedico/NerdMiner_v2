@@ -146,108 +146,68 @@ void test_sha256_validation_basic() {
 
 #ifdef MINING_TEST
 
-void test_mining_statistics_reset() {
-    Serial.println("\n=== Testing Mining Statistics Reset ===");
+void test_mining_nonce_configuration() {
+    Serial.println("\n=== Testing Mining Nonce Configuration ===");
 
-    // Test that we can at least verify the mining constants are properly defined
-    // This is a simplified test that doesn't require the full mining implementation
+    // MAX_NONCE must be a positive multiple of the step size so workers partition cleanly
     TEST_ASSERT_TRUE(MAX_NONCE_STEP > 0);
-    TEST_ASSERT_TRUE(DEFAULT_DIFFICULTY > 0.0);
+    TEST_ASSERT_TRUE(MAX_NONCE >= MAX_NONCE_STEP);
+    TEST_ASSERT_EQUAL_UINT32(0, MAX_NONCE % MAX_NONCE_STEP);
 
-    Serial.println("✓ Mining statistics reset tests passed (simplified)");
+    // Keep-alive must fire before the pool inactivity threshold to maintain the socket
+    TEST_ASSERT_TRUE(KEEPALIVE_TIME_ms < POOLINACTIVITY_TIME_ms);
+
+    // Random nonce start must leave us enough headroom to scan MAX_NONCE nonces without overflow
+    TEST_ASSERT_TRUE(UINT32_MAX - NONCE_START_RANDOM >= MAX_NONCE);
+
+    Serial.println("✓ Mining nonce configuration validated");
 }
 
-void test_mining_job_request_structure() {
-    Serial.println("\n=== Testing Mining Job Request Structure ===");
+void test_mining_calculate_mining_data_core_fields() {
+    Serial.println("\n=== Testing Mining Data Preparation ===");
 
-    // Create a JobRequest-like structure for testing
-    struct TestJobRequest {
-        uint32_t id;
-        uint32_t nonce_start;
-        uint32_t nonce_count;
-        double difficulty;
-        uint8_t sha_buffer[128];
-        uint32_t midstate[8];
-        uint32_t bake[16];
+    mining_subscribe worker;
+    worker.extranonce1 = "00000000";
+    worker.extranonce2_size = 4;
+    strcpy(worker.wName, "test_worker");
+    strcpy(worker.wPass, "x");
+
+    mining_job job;
+    job.merkle_branch_len = 0;
+    job.job_id = "job";
+    job.prev_block_hash = "0000000000000000000000000000000000000000000000000000000000000000";
+    job.coinb1 = "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff08";
+    job.coinb2 = "ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000";
+    job.version = "00000001";
+    job.nbits = "1d00ffff";
+    job.ntime = "4c92809d";
+    job.clean_jobs = true;
+
+    miner_data prepared = calculateMiningData(worker, job);
+
+    const uint8_t expected_target[32] = {
+        0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     };
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected_target, prepared.bytearray_target, sizeof(expected_target));
 
-    TestJobRequest job;
-    job.id = 12345;
-    job.nonce_start = 0x1000000;
-    job.nonce_count = 4096;
-    job.difficulty = 0.00015;
+    // Block header version should be little-endian (0x00000001 -> 01 00 00 00)
+    TEST_ASSERT_EQUAL_UINT8(0x01, prepared.bytearray_blockheader[0]);
+    TEST_ASSERT_EQUAL_UINT8(0x00, prepared.bytearray_blockheader[1]);
+    TEST_ASSERT_EQUAL_UINT8(0x00, prepared.bytearray_blockheader[2]);
+    TEST_ASSERT_EQUAL_UINT8(0x00, prepared.bytearray_blockheader[3]);
 
-    // Test structure initialization
-    TEST_ASSERT_EQUAL_UINT32(12345, job.id);
-    TEST_ASSERT_EQUAL_UINT32(0x1000000, job.nonce_start);
-    TEST_ASSERT_EQUAL_UINT32(4096, job.nonce_count);
-    TEST_ASSERT_EQUAL_DOUBLE(0.00015, job.difficulty);
+    // Coinbase hashing should produce a non-zero merkle root
+    TEST_ASSERT_TRUE(isSha256Valid(prepared.merkle_result));
 
-    // Test buffer sizes
-    TEST_ASSERT_EQUAL_size_t(128, sizeof(job.sha_buffer));
-    TEST_ASSERT_EQUAL_size_t(32, sizeof(job.midstate)); // 8 * 4 bytes
-    TEST_ASSERT_EQUAL_size_t(64, sizeof(job.bake)); // 16 * 4 bytes
-
-    Serial.println("✓ Mining job request structure tests passed");
-}
-
-void test_mining_job_result_structure() {
-    Serial.println("\n=== Testing Mining Job Result Structure ===");
-
-    // Create a JobResult-like structure for testing
-    struct TestJobResult {
-        uint32_t id;
-        uint32_t nonce;
-        uint32_t nonce_count;
-        double difficulty;
-        uint8_t hash[32];
-    };
-
-    TestJobResult result;
-    result.id = 12345;
-    result.nonce = 0xDEADBEEF;
-    result.nonce_count = 1000;
-    result.difficulty = 0.5;
-
-    // Fill hash with test pattern
-    for (int i = 0; i < 32; i++) {
-        result.hash[i] = (uint8_t)(i * 7 + 42);
+    // Pool target is not populated in calculateMiningData yet; it should remain zeroed
+    for (size_t i = 0; i < sizeof(prepared.bytearray_pooltarget); ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0, prepared.bytearray_pooltarget[i]);
     }
 
-    // Test structure initialization
-    TEST_ASSERT_EQUAL_UINT32(12345, result.id);
-    TEST_ASSERT_EQUAL_UINT32(0xDEADBEEF, result.nonce);
-    TEST_ASSERT_EQUAL_UINT32(1000, result.nonce_count);
-    TEST_ASSERT_EQUAL_DOUBLE(0.5, result.difficulty);
-
-    // Test hash buffer
-    TEST_ASSERT_EQUAL_size_t(32, sizeof(result.hash));
-    TEST_ASSERT_EQUAL_UINT8(42, result.hash[0]); // 0 * 7 + 42
-    TEST_ASSERT_EQUAL_UINT8(49, result.hash[1]); // 1 * 7 + 42
-
-    Serial.println("✓ Mining job result structure tests passed");
-}
-
-void test_mining_constants() {
-    Serial.println("\n=== Testing Mining Constants ===");
-
-    // Test that mining constants are defined correctly
-    TEST_ASSERT_TRUE(MAX_NONCE_STEP > 0);
-    TEST_ASSERT_TRUE(MAX_NONCE > MAX_NONCE_STEP);
-    TEST_ASSERT_TRUE(DEFAULT_DIFFICULTY > 0.0);
-    TEST_ASSERT_TRUE(KEEPALIVE_TIME_ms > 0);
-    TEST_ASSERT_TRUE(POOLINACTIVITY_TIME_ms > 0);
-    TEST_ASSERT_TRUE(TARGET_BUFFER_SIZE > 0);
-
-    // Print values for verification
-    Serial.print("MAX_NONCE_STEP: "); Serial.println(MAX_NONCE_STEP);
-    Serial.print("MAX_NONCE: "); Serial.println(MAX_NONCE);
-    Serial.print("DEFAULT_DIFFICULTY: "); Serial.println(DEFAULT_DIFFICULTY, 8);
-    Serial.print("KEEPALIVE_TIME_ms: "); Serial.println(KEEPALIVE_TIME_ms);
-    Serial.print("POOLINACTIVITY_TIME_ms: "); Serial.println(POOLINACTIVITY_TIME_ms);
-    Serial.print("TARGET_BUFFER_SIZE: "); Serial.println(TARGET_BUFFER_SIZE);
-
-    Serial.println("✓ Mining constants tests passed");
+    Serial.println("✓ Mining data preparation verified");
 }
 
 void test_miner_data_structure() {
@@ -1132,10 +1092,12 @@ void test_utils_edge_cases() {
 
     // Non-8-aligned input (should return early)
     uint8_t swap_output[4];
-    memset(swap_output, 0xAA, 4);
+    memset(swap_output, 0xAA, sizeof(swap_output));
     swap_endian_words("1234567", swap_output); // 7 chars, not aligned
     // Buffer should remain unchanged
-    TEST_ASSERT_EQUAL_UINT8(0xAA, swap_output[0]);
+    for (size_t i = 0; i < sizeof(swap_output); ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0xAA, swap_output[i]);
+    }
     Serial.println("    Non-8-aligned input handling - PASS");
 
     // Null pointer handling
@@ -1258,8 +1220,15 @@ void test_utils_buffer_overflow_protection() {
     // Should handle gracefully without crash
     miner_data result = calculateMiningData(mWorker, mJob);
 
-    // Function should return safely (even if data may be invalid/truncated)
-    TEST_ASSERT_TRUE(true); // Did not crash
+    // Coinbase overflow should leave merkle result untouched (all zeros)
+    bool merkle_all_zero = true;
+    for (size_t i = 0; i < sizeof(result.merkle_result); ++i) {
+        if (result.merkle_result[i] != 0) {
+            merkle_all_zero = false;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(merkle_all_zero);
     Serial.println("    Oversized coinbase handled safely - PASS");
 
     // Test Case 2: Normal size after overflow test (verify recovery)
@@ -1285,8 +1254,6 @@ void test_utils_buffer_overflow_protection() {
 
     miner_data result3 = calculateMiningData(mWorker, mJob);
 
-    // Should handle without crash
-    TEST_ASSERT_TRUE(true);
     TEST_ASSERT_TRUE(isSha256Valid(result3.merkle_result));
     Serial.println("    Multiple merkle branches handled - PASS");
 
@@ -1729,10 +1696,8 @@ void setup() {
     #endif
 
     #ifdef MINING_TEST
-    RUN_TEST(test_mining_statistics_reset);
-    RUN_TEST(test_mining_job_request_structure);
-    RUN_TEST(test_mining_job_result_structure);
-    RUN_TEST(test_mining_constants);
+    RUN_TEST(test_mining_nonce_configuration);
+    RUN_TEST(test_mining_calculate_mining_data_core_fields);
     RUN_TEST(test_miner_data_structure);
     #endif
 

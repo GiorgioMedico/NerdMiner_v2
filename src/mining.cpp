@@ -16,17 +16,23 @@
 #include <mutex>
 #include <list>
 #include <map>
+#include <atomic>
 #include "mbedtls/sha256.h"
 #include "i2c_master.h"
+#include "esp_random.h"
 
 //10 Jobs per second
-#define NONCE_PER_JOB_SW 4096
-#define NONCE_PER_JOB_HW 16*1024
+// #define NONCE_PER_JOB_SW 4096
+// #define NONCE_PER_JOB_HW 16*1024
+#define NONCE_PER_JOB_SW 8192
+#define NONCE_PER_JOB_HW 32*1024
 
 //#define I2C_SLAVE
 
 //#define SHA256_VALIDATE
 //#define RANDOM_NONCE
+// Random nonce mask: clears lower 14 bits (0x3FFF) to ensure 16KB alignment
+// This provides better distribution across nonce space for random mining
 #define RANDOM_NONCE_MASK 0xFFFFC000
 
 #ifdef HARDWARE_SHA265
@@ -49,11 +55,15 @@ uint32_t totalKHashes = 0;
 uint32_t elapsedKHs = 0;
 uint64_t upTime = 0;
 
-volatile uint32_t shares; // increase if blockhash has 32 bits of zeroes
-volatile uint32_t valids; // increased if blockhash <= target
+std::atomic<uint32_t> shares{0}; // increase if blockhash has 32 bits of zeroes
+std::atomic<uint32_t> valids{0}; // increased if blockhash <= target
 
-// Track best diff
+// Track best diff (using mutex for thread safety since std::atomic<double> not always available)
 double best_diff = 0.0;
+std::mutex best_diff_mutex;
+
+// Track SHA hardware timeout events for diagnostics
+std::atomic<uint32_t> sha_timeout_count{0};
 
 // Variables to hold data from custom textboxes
 //Track mining stats in non volatile memory
@@ -105,16 +115,21 @@ bool checkPoolConnection(void) {
 //checks if pool is not sending any data to reconnect again.
 //Even connection could be alive, pool could stop sending new job NOTIFY
 unsigned long mStart0Hashrate = 0;
-bool checkPoolInactivity(unsigned int keepAliveTime, unsigned long inactivityTime){ 
+bool checkPoolInactivity(unsigned int keepAliveTime, unsigned long inactivityTime){
 
     unsigned long currentKHashes = (Mhashes*1000) + hashes/1000;
+
+    // Handle hash counter wraparound (similar to timestamp wraparound)
+    if (currentKHashes < totalKHashes) {
+      totalKHashes = currentKHashes;
+    }
     unsigned long elapsedKHs = currentKHashes - totalKHashes;
 
     uint32_t time_now = millis();
 
-    // If no shares sent to pool
-    // send something to pool to hold socket oppened
-    if (time_now < mLastTXtoPool) //32bit wrap
+    // If no shares sent to pool, send something to pool to hold socket open
+    // Handle 32-bit timestamp wraparound (occurs every ~49 days)
+    if (time_now < mLastTXtoPool)
       mLastTXtoPool = time_now;
     if ( time_now > mLastTXtoPool + keepAliveTime)
     {
@@ -160,6 +175,7 @@ struct JobResult
 };
 
 static std::mutex s_job_mutex;
+static std::mutex s_submission_mutex;
 std::list<std::shared_ptr<JobRequest>> s_job_request_list_sw;
 #ifdef HARDWARE_SHA265
 std::list<std::shared_ptr<JobRequest>> s_job_request_list_hw;
@@ -181,14 +197,14 @@ static void JobPush(std::list<std::shared_ptr<JobRequest>> &job_list,  uint32_t 
   job_list.push_back(job);
 }
 
-struct Submition
+struct Submission
 {
   double diff;
   bool is32bit;
   bool isValid;
 };
 
-static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, std::shared_ptr<Submition>> & submition_map)
+static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, std::shared_ptr<Submission>> & submission_map)
 {
   {
     std::lock_guard<std::mutex> lock(s_job_mutex);
@@ -200,11 +216,13 @@ static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, std::shared_ptr
   }
   s_working_current_job_id = 0xFF;
   job_pool = 0xFFFFFFFF;
-  submition_map.clear();
+  // NOTE: Caller MUST clear submission_map while holding s_submission_mutex
+  // to prevent race conditions. This function does NOT clear the map.
 }
 
 #ifdef RANDOM_NONCE
-uint64_t s_random_state = 1;
+// Initialize with hardware RNG for better entropy
+uint64_t s_random_state = ((uint64_t)esp_random() << 32) | esp_random();
 static uint32_t RandomGet()
 {
     s_random_state += 0x9E3779B97F4A7C15ull;
@@ -227,7 +245,7 @@ void runStratumWorker(void *name) {
   Serial.printf("### [Total Heap / Free heap / Min free heap]: %d / %d / %d \n", ESP.getHeapSize(), ESP.getFreeHeap(), ESP.getMinFreeHeap());
   #endif
 
-  std::map<uint32_t, std::shared_ptr<Submition>> s_submition_map;
+  std::map<uint32_t, std::shared_ptr<Submission>> s_submission_map;
 
 #ifdef I2C_SLAVE
   std::vector<uint8_t> i2c_slave_vector;
@@ -256,7 +274,11 @@ void runStratumWorker(void *name) {
     if(WiFi.status() != WL_CONNECTED){
       // WiFi is disconnected, so reconnect now
       mMonitor.NerdStatus = NM_Connecting;
-      MiningJobStop(job_pool, s_submition_map);
+      {
+        std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
+        MiningJobStop(job_pool, s_submission_map);
+        s_submission_map.clear();
+      }
       WiFi.reconnect();
       vTaskDelay(5000 / portTICK_PERIOD_MS);
       continue;
@@ -265,7 +287,11 @@ void runStratumWorker(void *name) {
     if(!checkPoolConnection()){
       //If server is not reachable add random delay for connection retries
       //Generate value between 1 and 60 secs
-      MiningJobStop(job_pool, s_submition_map);
+      {
+        std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
+        MiningJobStop(job_pool, s_submission_map);
+        s_submission_map.clear();
+      }
       vTaskDelay(((1 + rand() % 60) * 1000) / portTICK_PERIOD_MS);
       continue;
     }
@@ -276,10 +302,14 @@ void runStratumWorker(void *name) {
       mWorker = init_mining_subscribe();
 
       // STEP 1: Pool server connection (SUBSCRIBE)
-      if(!tx_mining_subscribe(client, mWorker)) { 
+      if(!tx_mining_subscribe(client, mWorker)) {
         client.stop();
-        MiningJobStop(job_pool, s_submition_map);
-        continue; 
+        {
+          std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
+          MiningJobStop(job_pool, s_submission_map);
+          s_submission_map.clear();
+        }
+        continue;
       }
       
       strcpy(mWorker.wName, Settings.BtcWallet);
@@ -303,19 +333,29 @@ void runStratumWorker(void *name) {
       Serial.println("  Detected more than 2 min without data form stratum server. Closing socket and reopening...");
       client.stop();
       isMinerSuscribed=false;
-      MiningJobStop(job_pool, s_submition_map);
-      continue; 
+      {
+        std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
+        MiningJobStop(job_pool, s_submission_map);
+        s_submission_map.clear();
+      }
+      continue;
     }
 
     {
       uint32_t time_now = millis();
-      if (time_now < last_job_time) //32bit wrap
+      // Handle 32-bit timestamp wraparound
+      if (time_now < last_job_time)
         last_job_time = time_now;
-      if (time_now >= last_job_time + 10*60*1000)  //10minutes without job
+      // Reconnect if no job received for 10 minutes
+      if (time_now >= last_job_time + 10*60*1000)
       {
         client.stop();
         isMinerSuscribed=false;
-        MiningJobStop(job_pool, s_submition_map);
+        {
+          std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
+          MiningJobStop(job_pool, s_submission_map);
+          s_submission_map.clear();
+        }
         continue;
       }
     }
@@ -330,7 +370,45 @@ void runStratumWorker(void *name) {
     //Read pending messages from pool
     while(client.connected() && client.available())
     {
-      String line = client.readStringUntil('\n');
+      // Read line with size limit to protect against buffer overflow
+      String line;
+      line.reserve(256); // Reserve reasonable size for typical pool messages
+      size_t bytesRead = 0;
+      bool foundNewline = false;
+
+      while (client.available() && bytesRead < MAX_POOL_LINE_SIZE) {
+        char c = client.read();
+        if (c == '\n') {
+          foundNewline = true;
+          break;
+        }
+        if (c != '\r') { // Skip carriage return
+          line += c;
+          bytesRead++;
+        }
+      }
+
+      // If we hit the size limit without finding newline, discard rest of line and disconnect
+      if (!foundNewline && bytesRead >= MAX_POOL_LINE_SIZE) {
+        Serial.println("Pool response too large, disconnecting");
+        // Consume remaining data on this line
+        while (client.available()) {
+          if (client.read() == '\n') break;
+        }
+        client.stop();
+        isMinerSuscribed = false;
+        {
+          std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
+          MiningJobStop(job_pool, s_submission_map);
+          s_submission_map.clear();
+        }
+        vTaskDelay(5000 / portTICK_PERIOD_MS); // Wait 5s before reconnecting
+        break;
+      }
+
+      if (line.length() == 0 && !foundNewline) {
+        continue; // Empty line or no data yet
+      }
       //Serial.println("  Received message from pool");      
       stratum_method result = parse_mining_method(line);
       switch (result)
@@ -386,10 +464,10 @@ void runStratumWorker(void *name) {
                                           #else
                                             #ifdef I2C_SLAVE
                                             if (!i2c_slave_vector.empty())
-                                              nonce_pool = 0x10000000;
+                                              nonce_pool = NONCE_START_I2C_SLAVE;
                                             else
                                             #endif
-                                              nonce_pool = 0xDA54E700;  //nonce 0x00000000 is not possible, start from some random nonce
+                                              nonce_pool = NONCE_START_RANDOM;
                                           #endif
                                           
 
@@ -420,45 +498,54 @@ void runStratumWorker(void *name) {
                                             }
                                           }
                                           #ifdef I2C_SLAVE
-                                          //Nonce for nonce_pool starts from 0x10000000
-                                          //For i2c slave we give nonces from 0x20000000, that is 0x10000000 nonces per slave
-                                          i2c_feed_slaves(i2c_slave_vector, job_pool & 0xFF, 0x20, currentPoolDifficulty, mMiner.bytearray_blockheader);
+                                          // Feed I2C slaves with work starting from NONCE_START_I2C_FEED
+                                          // This gives 0x10000000 nonces per slave (difference between I2C_FEED and I2C_SLAVE)
+                                          i2c_feed_slaves(i2c_slave_vector, job_pool & 0xFF, NONCE_START_I2C_FEED >> 24, currentPoolDifficulty, mMiner.bytearray_blockheader);
                                           #endif
                                       } else
                                       {
-                                        Serial.println("Parsing error, need restart");
+                                        Serial.printf("Mining notify parse error (line: %.100s), restarting\n", line.c_str());
                                         client.stop();
                                         isMinerSuscribed=false;
-                                        MiningJobStop(job_pool, s_submition_map);
+                                        {
+                                          std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
+                                          MiningJobStop(job_pool, s_submission_map);
+                                          s_submission_map.clear();
+                                        }
                                       }
                                       break;
           case MINING_SET_DIFFICULTY: parse_mining_set_difficulty(line, currentPoolDifficulty);
                                       break;
           case STRATUM_SUCCESS:       {
                                         unsigned long id = parse_extract_id(line);
-                                        auto itt = s_submition_map.find(id);
-                                        if (itt != s_submition_map.end())
+                                        std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
+                                        auto itt = s_submission_map.find(id);
+                                        if (itt != s_submission_map.end())
                                         {
-                                          if (itt->second->diff > best_diff)
-                                            best_diff = itt->second->diff;
+                                          {
+                                            std::lock_guard<std::mutex> diff_lock(best_diff_mutex);
+                                            if (itt->second->diff > best_diff)
+                                              best_diff = itt->second->diff;
+                                          }
                                           if (itt->second->is32bit)
-                                            shares++;
+                                            shares.fetch_add(1, std::memory_order_relaxed);
                                           if (itt->second->isValid)
                                           {
                                             Serial.println("CONGRATULATIONS! Valid block found");
-                                            valids++;
+                                            valids.fetch_add(1, std::memory_order_relaxed);
                                           }
-                                          s_submition_map.erase(itt);
+                                          s_submission_map.erase(itt);
                                         }
                                       }
                                       break;
           case STRATUM_PARSE_ERROR:   {
                                         unsigned long id = parse_extract_id(line);
-                                        auto itt = s_submition_map.find(id);
-                                        if (itt != s_submition_map.end())
+                                        std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
+                                        auto itt = s_submission_map.find(id);
+                                        if (itt != s_submission_map.end())
                                         {
-                                          Serial.printf("Refuse submition %d\n", id);
-                                          s_submition_map.erase(itt);
+                                          Serial.printf("Pool refused submission %d (line: %.100s)\n", id, line.c_str());
+                                          s_submission_map.erase(itt);
                                         }
                                       }
                                       break;
@@ -516,7 +603,7 @@ void runStratumWorker(void *name) {
       s_job_result_list.clear();
 
 #if 1
-      while (s_job_request_list_sw.size() < 4)
+      while (s_job_request_list_sw.size() < JOB_QUEUE_SIZE)
       {
         JobPush( s_job_request_list_sw, job_pool, nonce_pool, NONCE_PER_JOB_SW, currentPoolDifficulty, mMiner.bytearray_blockheader, diget_mid, bake);
         #ifdef RANDOM_NONCE
@@ -528,7 +615,7 @@ void runStratumWorker(void *name) {
 #endif
 
       #ifdef HARDWARE_SHA265
-      while (s_job_request_list_hw.size() < 4)
+      while (s_job_request_list_hw.size() < JOB_QUEUE_SIZE)
       {
         #if defined(CONFIG_IDF_TARGET_ESP32)
           JobPush( s_job_request_list_hw, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, sha_buffer_swap, hw_midstate, bake);
@@ -564,18 +651,25 @@ void runStratumWorker(void *name) {
         Serial.println("");
         mLastTXtoPool = millis();
 
-        std::shared_ptr<Submition> submition = std::make_shared<Submition>();
-        submition->diff = res->difficulty;
-        submition->is32bit = (res->hash[29] == 0 && res->hash[28] == 0);
-        if (submition->is32bit)
+        std::shared_ptr<Submission> submission = std::make_shared<Submission>();
+        submission->diff = res->difficulty;
+        submission->is32bit = (res->hash[29] == 0 && res->hash[28] == 0);
+        if (submission->is32bit)
         {
-          submition->isValid = checkValid(res->hash, mMiner.bytearray_target);
+          submission->isValid = checkValid(res->hash, mMiner.bytearray_target);
         } else
-          submition->isValid = false;
+          submission->isValid = false;
 
-        s_submition_map.insert(std::make_pair(sumbit_id, submition));
-        if (s_submition_map.size() > 32)
-          s_submition_map.erase(s_submition_map.begin());
+        {
+          std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
+          s_submission_map.insert(std::make_pair(sumbit_id, submission));
+          // Limit map size to prevent unbounded growth
+          // Remove oldest entries to maintain maximum size
+          while (s_submission_map.size() > SUBMISSION_MAP_MAX)
+          {
+            s_submission_map.erase(s_submission_map.begin());
+          }
+        }
       }
     }
   }
@@ -598,7 +692,7 @@ void minerWorkerSw(void * task_id)
       std::lock_guard<std::mutex> lock(s_job_mutex);
       if (result)
       {
-        if (s_job_result_list.size() < 16)
+        if (s_job_result_list.size() < RESULT_LIST_SIZE)
           s_job_result_list.push_back(result);
         result.reset();
       }
@@ -661,22 +755,6 @@ static inline void nerd_sha_ll_fill_text_block_sha256(const void *input_text, ui
     REG_WRITE(&reg_addr_buf[0], data_words[0]);
     REG_WRITE(&reg_addr_buf[1], data_words[1]);
     REG_WRITE(&reg_addr_buf[2], data_words[2]);
-#if 0
-    REG_WRITE(&reg_addr_buf[3], nonce);
-    //REG_WRITE(&reg_addr_buf[3], data_words[3]);    
-    REG_WRITE(&reg_addr_buf[4], data_words[4]);
-    REG_WRITE(&reg_addr_buf[5], data_words[5]);
-    REG_WRITE(&reg_addr_buf[6], data_words[6]);
-    REG_WRITE(&reg_addr_buf[7], data_words[7]);
-    REG_WRITE(&reg_addr_buf[8], data_words[8]);
-    REG_WRITE(&reg_addr_buf[9], data_words[9]);
-    REG_WRITE(&reg_addr_buf[10], data_words[10]);
-    REG_WRITE(&reg_addr_buf[11], data_words[11]);
-    REG_WRITE(&reg_addr_buf[12], data_words[12]);
-    REG_WRITE(&reg_addr_buf[13], data_words[13]);
-    REG_WRITE(&reg_addr_buf[14], data_words[14]);
-    REG_WRITE(&reg_addr_buf[15], data_words[15]);
-#else
     REG_WRITE(&reg_addr_buf[3], nonce);
     REG_WRITE(&reg_addr_buf[4], 0x00000080);
     REG_WRITE(&reg_addr_buf[5], 0x00000000);
@@ -690,7 +768,6 @@ static inline void nerd_sha_ll_fill_text_block_sha256(const void *input_text, ui
     REG_WRITE(&reg_addr_buf[13], 0x00000000);
     REG_WRITE(&reg_addr_buf[14], 0x00000000);
     REG_WRITE(&reg_addr_buf[15], 0x80020000);
-#endif
 }
 
 static inline void nerd_sha_ll_fill_text_block_sha256_inter()
@@ -772,10 +849,33 @@ static inline void nerd_sha_ll_write_digest(void *digest_state)
     REG_WRITE(&reg_addr_buf[7], digest_state_words[7]);
 }
 
-static inline void nerd_sha_hal_wait_idle()
+static inline bool nerd_sha_hal_wait_idle()
 {
-    while (REG_READ(SHA_BUSY_REG))
-    {}
+    uint32_t timeout = SHA_HARDWARE_TIMEOUT_CYCLES;
+    while (REG_READ(SHA_BUSY_REG) && --timeout > 0)
+    {
+        asm volatile("nop");
+    }
+    if (timeout == 0) {
+        uint32_t count = sha_timeout_count.fetch_add(1, std::memory_order_relaxed);
+        if (count % 1000 == 0 && count > 0) {
+            Serial.printf("[SHA] Hardware timeout count: %lu\n", count);
+        }
+        return false;
+    }
+    return true;
+}
+
+// Reset SHA hardware to known state after timeout or error
+static inline void nerd_sha_hw_reset()
+{
+    // Set SHA mode to reset the state machine
+    REG_WRITE(SHA_MODE_REG, SHA2_256);
+    // Give hardware time to reset
+    asm volatile("nop");
+    asm volatile("nop");
+    asm volatile("nop");
+    asm volatile("nop");
 }
 
 //#define VALIDATION
@@ -804,7 +904,7 @@ void minerWorkerHw(void * task_id)
       std::lock_guard<std::mutex> lock(s_job_mutex);
       if (result)
       {
-        if (s_job_result_list.size() < 16)
+        if (s_job_result_list.size() < RESULT_LIST_SIZE)
           s_job_result_list.push_back(result);
         result.reset();
       }
@@ -841,14 +941,22 @@ void minerWorkerHw(void * task_id)
         nerd_sha_ll_fill_text_block_sha256(sha_buffer, n);
         //sha_ll_continue_block(SHA2_256);
         REG_WRITE(SHA_CONTINUE_REG, 1);
-        
+
         sha_ll_load(SHA2_256);
-        nerd_sha_hal_wait_idle();
+        if (!nerd_sha_hal_wait_idle()) {
+          // Reset SHA hardware to known state after timeout
+          nerd_sha_hw_reset();
+          continue;
+        }
         nerd_sha_ll_fill_text_block_sha256_inter();
         //sha_ll_start_block(SHA2_256);
         REG_WRITE(SHA_START_REG, 1);
         sha_ll_load(SHA2_256);
-        nerd_sha_hal_wait_idle();
+        if (!nerd_sha_hal_wait_idle()) {
+          // Reset SHA hardware to known state after timeout
+          nerd_sha_hw_reset();
+          continue;
+        }
         if (nerd_sha_ll_read_digest_if(hash))
         {
           //Serial.printf("Hw 16bit Share, nonce=0x%X\n", n);
@@ -937,10 +1045,34 @@ static inline void nerd_sha_ll_read_digest(void* ptr)
   DPORT_INTERRUPT_RESTORE();
 }
 
-static inline void nerd_sha_hal_wait_idle()
+static inline bool nerd_sha_hal_wait_idle()
 {
-    while (DPORT_REG_READ(SHA_256_BUSY_REG))
-    {}
+    uint32_t timeout = SHA_HARDWARE_TIMEOUT_CYCLES;
+    while (DPORT_REG_READ(SHA_256_BUSY_REG) && --timeout > 0)
+    {
+        asm volatile("nop");
+    }
+    if (timeout == 0) {
+        uint32_t count = sha_timeout_count.fetch_add(1, std::memory_order_relaxed);
+        if (count % 1000 == 0 && count > 0) {
+            Serial.printf("[SHA] Hardware timeout count: %lu\n", count);
+        }
+        return false;
+    }
+    return true;
+}
+
+// Reset SHA hardware to known state after timeout or error
+static inline void nerd_sha_hw_reset()
+{
+    // For ESP32 classic, we need to use DPORT access
+    // Reset by reconfiguring the SHA mode
+    sha_ll_start_block(SHA2_256);
+    // Give hardware time to reset
+    asm volatile("nop");
+    asm volatile("nop");
+    asm volatile("nop");
+    asm volatile("nop");
 }
 
 static inline void nerd_sha_ll_fill_text_block_sha256(const void *input_text)
@@ -975,7 +1107,6 @@ static inline void nerd_sha_ll_fill_text_block_sha256_upper(const void *input_te
     reg_addr_buf[1]  = data_words[1];
     reg_addr_buf[2]  = data_words[2];
     reg_addr_buf[3]  = __builtin_bswap32(nonce);
-#if 1
     reg_addr_buf[4]  = 0x80000000;
     reg_addr_buf[5]  = 0x00000000;
     reg_addr_buf[6]  = 0x00000000;
@@ -988,37 +1119,13 @@ static inline void nerd_sha_ll_fill_text_block_sha256_upper(const void *input_te
     reg_addr_buf[13] = 0x00000000;
     reg_addr_buf[14] = 0x00000000;
     reg_addr_buf[15] = 0x00000280;
-#else
-    reg_addr_buf[4]  = data_words[4];
-    reg_addr_buf[5]  = data_words[5];
-    reg_addr_buf[6]  = data_words[6];
-    reg_addr_buf[7]  = data_words[7];
-    reg_addr_buf[8]  = data_words[8];
-    reg_addr_buf[9]  = data_words[9];
-    reg_addr_buf[10] = data_words[10];
-    reg_addr_buf[11] = data_words[11];
-    reg_addr_buf[12] = data_words[12];
-    reg_addr_buf[13] = data_words[13];
-    reg_addr_buf[14] = data_words[14];
-    reg_addr_buf[15] = data_words[15];
-#endif
 }
 
 static inline void nerd_sha_ll_fill_text_block_sha256_double()
 {
     uint32_t *reg_addr_buf = (uint32_t *)(SHA_TEXT_BASE);
 
-#if 0
-    //No change
-    reg_addr_buf[0]  = data_words[0];
-    reg_addr_buf[1]  = data_words[1];
-    reg_addr_buf[2]  = data_words[2];
-    reg_addr_buf[3]  = data_words[3];
-    reg_addr_buf[4]  = data_words[4];
-    reg_addr_buf[5]  = data_words[5];
-    reg_addr_buf[6]  = data_words[6];
-    reg_addr_buf[7]  = data_words[7];
-#endif
+    // First 8 words remain unchanged from previous hash
     reg_addr_buf[8]  = 0x80000000;
     reg_addr_buf[9]  = 0x00000000;
     reg_addr_buf[10] = 0x00000000;
@@ -1045,7 +1152,7 @@ void minerWorkerHw(void * task_id)
       std::lock_guard<std::mutex> lock(s_job_mutex);
       if (result)
       {
-        if (s_job_result_list.size() < 16)
+        if (s_job_result_list.size() < RESULT_LIST_SIZE)
           s_job_result_list.push_back(result);
         result.reset();
       }
@@ -1077,19 +1184,35 @@ void minerWorkerHw(void * task_id)
         sha_ll_start_block(SHA2_256);
 
         //sha_hal_hash_block(SHA2_256, s_test_buffer+64, 64/4, false);
-        nerd_sha_hal_wait_idle();
+        if (!nerd_sha_hal_wait_idle()) {
+          // Reset SHA hardware to known state after timeout
+          nerd_sha_hw_reset();
+          continue;
+        }
         nerd_sha_ll_fill_text_block_sha256_upper(sha_buffer+64, job->nonce_start+n);
         sha_ll_continue_block(SHA2_256);
 
-        nerd_sha_hal_wait_idle();
+        if (!nerd_sha_hal_wait_idle()) {
+          // Reset SHA hardware to known state after timeout
+          nerd_sha_hw_reset();
+          continue;
+        }
         sha_ll_load(SHA2_256);
 
         //sha_hal_hash_block(SHA2_256, interResult, 64/4, true);
-        nerd_sha_hal_wait_idle();
+        if (!nerd_sha_hal_wait_idle()) {
+          // Reset SHA hardware to known state after timeout
+          nerd_sha_hw_reset();
+          continue;
+        }
         nerd_sha_ll_fill_text_block_sha256_double();
         sha_ll_start_block(SHA2_256);
 
-        nerd_sha_hal_wait_idle();
+        if (!nerd_sha_hal_wait_idle()) {
+          // Reset SHA hardware to known state after timeout
+          nerd_sha_hw_reset();
+          continue;
+        }
         sha_ll_load(SHA2_256);
         if (nerd_sha_ll_read_digest_swap_if(hash))
         {
@@ -1139,19 +1262,20 @@ void restoreStat() {
 
   ret = nvs_open("state", NVS_READWRITE, &stat_handle);
 
+  double local_best_diff;
   size_t required_size = sizeof(double);
-  nvs_get_blob(stat_handle, "best_diff", &best_diff, &required_size);
+  nvs_get_blob(stat_handle, "best_diff", &local_best_diff, &required_size);
   nvs_get_u32(stat_handle, "Mhashes", &Mhashes);
   uint32_t nv_shares, nv_valids;
   nvs_get_u32(stat_handle, "shares", &nv_shares);
   nvs_get_u32(stat_handle, "valids", &nv_valids);
-  shares = nv_shares;
-  valids = nv_valids;
+  shares.store(nv_shares, std::memory_order_release);
+  valids.store(nv_valids, std::memory_order_release);
   nvs_get_u32(stat_handle, "templates", &templates);
   nvs_get_u64(stat_handle, "upTime", &upTime);
 
   uint32_t crc = crc32_reset();
-  crc = crc32_add(crc, &best_diff, sizeof(best_diff));
+  crc = crc32_add(crc, &local_best_diff, sizeof(local_best_diff));
   crc = crc32_add(crc, &Mhashes, sizeof(Mhashes));
   crc = crc32_add(crc, &nv_shares, sizeof(nv_shares));
   crc = crc32_add(crc, &nv_valids, sizeof(nv_valids));
@@ -1159,46 +1283,95 @@ void restoreStat() {
   crc = crc32_add(crc, &upTime, sizeof(upTime));
   crc = crc32_finish(crc);
 
-  uint32_t nv_crc;
-  nvs_get_u32(stat_handle, "crc32", &nv_crc);
-  if (nv_crc != crc)
+  uint32_t nv_crc = 0;
+  esp_err_t crc_err = nvs_get_u32(stat_handle, "crc32", &nv_crc);
+  if (crc_err != ESP_OK || nv_crc != crc)
   {
-    best_diff = 0.0;
+    Serial.printf("[MONITOR] CRC validation failed (err=%d), resetting stats\n", crc_err);
+    {
+      std::lock_guard<std::mutex> diff_lock(best_diff_mutex);
+      best_diff = 0.0;
+    }
     Mhashes = 0;
-    shares = 0;
-    valids = 0;
+    shares.store(0, std::memory_order_release);
+    valids.store(0, std::memory_order_release);
     templates = 0;
     upTime = 0;
+  }
+  else
+  {
+    // CRC valid, apply loaded value to best_diff
+    std::lock_guard<std::mutex> diff_lock(best_diff_mutex);
+    best_diff = local_best_diff;
   }
 }
 
 void saveStat() {
   if(!Settings.saveStats) return;
   Serial.printf("[MONITOR] Saving stats\n");
-  nvs_set_blob(stat_handle, "best_diff", &best_diff, sizeof(best_diff));
-  nvs_set_u32(stat_handle, "Mhashes", Mhashes);
-  nvs_set_u32(stat_handle, "shares", shares);
-  nvs_set_u32(stat_handle, "valids", valids);
-  nvs_set_u32(stat_handle, "templates", templates);
-  nvs_set_u64(stat_handle, "upTime", upTime);
+
+  double local_best_diff;
+  {
+    std::lock_guard<std::mutex> diff_lock(best_diff_mutex);
+    local_best_diff = best_diff;
+  }
+
+  esp_err_t err;
+  err = nvs_set_blob(stat_handle, "best_diff", &local_best_diff, sizeof(local_best_diff));
+  if (err != ESP_OK) Serial.printf("[MONITOR] Failed to save best_diff: %d\n", err);
+
+  err = nvs_set_u32(stat_handle, "Mhashes", Mhashes);
+  if (err != ESP_OK) Serial.printf("[MONITOR] Failed to save Mhashes: %d\n", err);
+
+  uint32_t nv_shares = shares.load(std::memory_order_acquire);
+  uint32_t nv_valids = valids.load(std::memory_order_acquire);
+
+  err = nvs_set_u32(stat_handle, "shares", nv_shares);
+  if (err != ESP_OK) Serial.printf("[MONITOR] Failed to save shares: %d\n", err);
+
+  err = nvs_set_u32(stat_handle, "valids", nv_valids);
+  if (err != ESP_OK) Serial.printf("[MONITOR] Failed to save valids: %d\n", err);
+
+  err = nvs_set_u32(stat_handle, "templates", templates);
+  if (err != ESP_OK) Serial.printf("[MONITOR] Failed to save templates: %d\n", err);
+
+  err = nvs_set_u64(stat_handle, "upTime", upTime);
+  if (err != ESP_OK) Serial.printf("[MONITOR] Failed to save upTime: %d\n", err);
 
   uint32_t crc = crc32_reset();
-  crc = crc32_add(crc, &best_diff, sizeof(best_diff));
+  crc = crc32_add(crc, &local_best_diff, sizeof(local_best_diff));
   crc = crc32_add(crc, &Mhashes, sizeof(Mhashes));
-  uint32_t nv_shares = shares;
-  uint32_t nv_valids = valids;
   crc = crc32_add(crc, &nv_shares, sizeof(nv_shares));
   crc = crc32_add(crc, &nv_valids, sizeof(nv_valids));
   crc = crc32_add(crc, &templates, sizeof(templates));
   crc = crc32_add(crc, &upTime, sizeof(upTime));
   crc = crc32_finish(crc);
-  nvs_set_u32(stat_handle, "crc32", crc);
+
+  err = nvs_set_u32(stat_handle, "crc32", crc);
+  if (err != ESP_OK) Serial.printf("[MONITOR] Failed to save crc32: %d\n", err);
+
+  err = nvs_commit(stat_handle);
+  if (err != ESP_OK) Serial.printf("[MONITOR] Failed to commit NVS: %d\n", err);
+}
+
+void closeStat() {
+    if (stat_handle != 0) {
+        nvs_commit(stat_handle);
+        nvs_close(stat_handle);
+        stat_handle = 0;
+        Serial.printf("[MONITOR] NVS handle closed\n");
+    }
 }
 
 void resetStat() {
     Serial.printf("[MONITOR] Resetting NVS stats\n");
-    templates = hashes = Mhashes = totalKHashes = elapsedKHs = upTime = shares = valids = 0;
-    best_diff = 0.0;
+    templates = hashes = Mhashes = totalKHashes = elapsedKHs = upTime = 0;
+    shares.store(0, std::memory_order_release);
+    valids.store(0, std::memory_order_release);
+    {
+      std::lock_guard<std::mutex> diff_lock(best_diff_mutex);
+      best_diff = 0.0;
+    }
     saveStat();
 }
 

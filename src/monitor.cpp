@@ -5,6 +5,7 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <list>
+#include <atomic>
 #include "mining.h"
 #include "utils.h"
 #include "monitor.h"
@@ -18,8 +19,8 @@ extern uint32_t totalKHashes;
 extern uint32_t elapsedKHs;
 extern uint64_t upTime;
 
-extern uint32_t shares; // increase if blockhash has 32 bits of zeroes
-extern uint32_t valids; // increased if blockhash <= targethalfshares
+extern std::atomic<uint32_t> shares; // increase if blockhash has 32 bits of zeroes
+extern std::atomic<uint32_t> valids; // increased if blockhash <= targethalfshares
 
 extern double best_diff; // track best diff
 
@@ -335,14 +336,14 @@ mining_data getMiningData(unsigned long mElapsed)
   int days = tm / 24;
   sprintf(timeMining, "%01d  %02d:%02d:%02d", days, hours, mins, secs);
 
-  data.completedShares = shares;
+  data.completedShares = shares.load(std::memory_order_relaxed);
   data.totalMHashes = Mhashes;
   data.totalKHashes = totalKHashes;
   data.currentHashRate = getCurrentHashRate(mElapsed);
   data.templates = templates;
   data.bestDiff = best_diff_string;
   data.timeMining = timeMining;
-  data.valids = valids;
+  data.valids = valids.load(std::memory_order_relaxed);
   data.temp = String(temperatureRead(), 0);
   data.currentTime = getTime();
 
@@ -353,7 +354,7 @@ clock_data getClockData(unsigned long mElapsed)
 {
   clock_data data;
 
-  data.completedShares = shares;
+  data.completedShares = shares.load(std::memory_order_relaxed);
   data.totalKHashes = totalKHashes;
   data.currentHashRate = getCurrentHashRate(mElapsed);
   data.btcPrice = getBTCprice();
@@ -368,7 +369,7 @@ clock_data_t getClockData_t(unsigned long mElapsed)
 {
   clock_data_t data;
 
-  data.valids = valids;
+  data.valids = valids.load(std::memory_order_relaxed);
   data.currentHashRate = getCurrentHashRate(mElapsed);
   getTime(&data.currentHours, &data.currentMinutes, &data.currentSeconds);
 
@@ -381,7 +382,7 @@ coin_data getCoinData(unsigned long mElapsed)
 
   updateGlobalData(); // Update gData vars asking mempool APIs
 
-  data.completedShares = shares;
+  data.completedShares = shares.load(std::memory_order_relaxed);
   data.totalKHashes = totalKHashes;
   data.currentHashRate = getCurrentHashRate(mElapsed);
   data.btcPrice = getBTCprice();

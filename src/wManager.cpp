@@ -124,6 +124,7 @@ void reset_configuration()
     Serial.println("Erasing Config, restarting");
     nvMem.deleteConfig();
     resetStat();
+    closeStat();  // Ensure NVS is properly closed before restart
     wm.resetSettings();
     ESP.restart();
 }
