@@ -75,6 +75,8 @@ void setup()
   Serial.setTimeout(0);
   delay(SECOND_MS/10);
 
+  DEBUG_SERIAL_PRINTF("CPU Frequency: %d MHz\n", getCpuFrequencyMhz());
+
   esp_task_wdt_init(WDT_MINER_TIMEOUT, true);
   // Idle task that would reset WDT never runs, because core 0 gets fully utilized
   disableCore0WDT();
