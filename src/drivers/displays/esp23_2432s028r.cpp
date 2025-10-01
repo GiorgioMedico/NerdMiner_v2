@@ -3,7 +3,9 @@
 #if defined ESP32_2432S028R || ESP32_2432S028_2USB
 
 #include <TFT_eSPI.h>
+#ifdef TOUCH_ENABLE
 #include <TFT_eTouch.h>
+#endif
 #include "media/images_320_170.h"
 #include "media/images_bottom_320_70.h"
 #include "media/myFonts.h"
@@ -24,8 +26,10 @@ extern nvMemory nvMem;
 OpenFontRender render;
 TFT_eSPI tft = TFT_eSPI();                  // Invoke library, pins defined in platformio.ini
 TFT_eSprite background = TFT_eSprite(&tft); // Invoke library sprite
+#ifdef TOUCH_ENABLE
 SPIClass hSPI(HSPI);
-TFT_eTouch<TFT_eSPI> touch(tft, ETOUCH_CS, 0xFF, hSPI); 
+TFT_eTouch<TFT_eSPI> touch(tft, ETOUCH_CS, 0xFF, hSPI);
+#endif 
 
 extern monitor_data mMonitor;
 extern pool_data pData;
@@ -68,13 +72,15 @@ void esp32_2432S028R_Init(void)
     tft.writedata(2);
     delay(120);
     tft.writecommand(ILI9341_GAMMASET); //Gamma curve selected
-    tft.writedata(1); 
+    tft.writedata(1);
   }
+#ifdef TOUCH_ENABLE
   hSPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, ETOUCH_CS);
   touch.init();
 
   TFT_eTouchBase::Calibation calibation = { 233, 3785, 3731, 120, 2 };
   touch.setCalibration(calibation);
+#endif
 
   // Configuring screen backlight brightness using ledcontrol channel 0.
   // Using 5000Hz in 8bit resolution, which gives 0-255 possible duty cycle setting.
@@ -534,33 +540,34 @@ char currentScreen = 0;
 
 void esp32_2432S028R_DoLedStuff(unsigned long frame)
 {
-  unsigned long currentMillis = millis();    
+  unsigned long currentMillis = millis();
+#ifdef TOUCH_ENABLE
   // / Check the touch coordinates 110x185 210x240
   if (currentMillis - previousTouchMillis >= 500)
-    { 
+    {
       int16_t t_x , t_y;  // To store the touch coordinates
       bool pressed = touch.getXY(t_x, t_y);
-      if (pressed) {                        
+      if (pressed) {
           if (((t_x > 109)&&(t_x < 211)) && ((t_y > 185)&&(t_y < 241))) {
             bottomScreenBlue ^= true;
             hasChangedScreen = true;
           } else if((t_x > 235) && ((t_y > 0)&&(t_y < 16))) {
             // Touching the top right corner of the screen, roughly in the gray status label.
-            // Disabling the screen backlight. 
+            // Disabling the screen backlight.
             esp32_2432S028R_AlternateScreenState();
           }
           else
             if (t_x > 160) {
               // next screen
-             // Serial.printf("Next screen touch( x:%d y:%d )\n", t_x, t_y);              
+             // Serial.printf("Next screen touch( x:%d y:%d )\n", t_x, t_y);
               currentDisplayDriver->current_cyclic_screen = (currentDisplayDriver->current_cyclic_screen + 1) % currentDisplayDriver->num_cyclic_screens;
             } else if (t_x < 160)
             {
               // Previus screen
-             // Serial.printf("Previus screen touch( x:%d y:%d )\n", t_x, t_y);              
+             // Serial.printf("Previus screen touch( x:%d y:%d )\n", t_x, t_y);
               /* Serial.println(currentDisplayDriver->current_cyclic_screen); */
-              currentDisplayDriver->current_cyclic_screen = currentDisplayDriver->current_cyclic_screen - 1;      
-              if (currentDisplayDriver->current_cyclic_screen<0) currentDisplayDriver->current_cyclic_screen = currentDisplayDriver->num_cyclic_screens - 1;              
+              currentDisplayDriver->current_cyclic_screen = currentDisplayDriver->current_cyclic_screen - 1;
+              if (currentDisplayDriver->current_cyclic_screen<0) currentDisplayDriver->current_cyclic_screen = currentDisplayDriver->num_cyclic_screens - 1;
             }
       }
       previousTouchMillis = currentMillis;
@@ -568,6 +575,7 @@ void esp32_2432S028R_DoLedStuff(unsigned long frame)
 
     if (currentScreen != currentDisplayDriver->current_cyclic_screen) hasChangedScreen ^= true;
     currentScreen = currentDisplayDriver->current_cyclic_screen;
+#endif
 
   switch (mMonitor.NerdStatus)
   {
