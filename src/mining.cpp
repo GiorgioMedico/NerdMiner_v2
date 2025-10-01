@@ -572,11 +572,11 @@ void runStratumWorker(void *name) {
       for (size_t n = 0; n < nonce_vector.size(); ++n)
       {
         std::shared_ptr<JobResult> result = std::make_shared<JobResult>();
-        ((uint32_t*)(mMiner.bytearray_blockheader+64+12))[0] = nonce_vector[n];
-        if (nerd_sha256d_baked(diget_mid, mMiner.bytearray_blockheader+64, bake, result->hash))
+        uint32_t nonce = nonce_vector[n];
+        if (nerd_sha256d_baked_nonce(diget_mid, bake, __builtin_bswap32(nonce), result->hash))
         {
           result->id = job_pool;
-          result->nonce = nonce_vector[n];
+          result->nonce = nonce;
           result->nonce_count = 0;
           result->difficulty = diff_from_target(result->hash);
           job_result_list.push_back(result);
@@ -715,14 +715,14 @@ void minerWorkerSw(void * task_id)
       uint8_t job_in_work = job->id & 0xFF;
       for (uint32_t n = 0; n < job->nonce_count; ++n)
       {
-        ((uint32_t*)(job->sha_buffer+64+12))[0] = job->nonce_start+n;
-        if (nerd_sha256d_baked(job->midstate, job->sha_buffer+64, job->bake, hash))
+        uint32_t nonce = job->nonce_start + n;
+        if (nerd_sha256d_baked_nonce(job->midstate, job->bake, __builtin_bswap32(nonce), hash))
         {
           double diff_hash = diff_from_target(hash);
           if (diff_hash > result->difficulty)
           {
             result->difficulty = diff_hash;
-            result->nonce = job->nonce_start+n;
+            result->nonce = nonce;
             memcpy(result->hash, hash, 32);
           }
         }
@@ -964,8 +964,7 @@ void minerWorkerHw(void * task_id)
           //DEBUG_SERIAL_PRINTF("Hw 16bit Share, nonce=0x%X\n", n);
 #ifdef VALIDATION
           //Validation
-          ((uint32_t*)(job->sha_buffer+64+12))[0] = n;
-          nerd_sha256d_baked(diget_mid, job->sha_buffer+64, bake, doubleHash);
+          nerd_sha256d_baked_nonce(diget_mid, bake, __builtin_bswap32(n), doubleHash);
           for (int i = 0; i < 32; ++i)
           {
             if (hash[i] != doubleHash[i])
