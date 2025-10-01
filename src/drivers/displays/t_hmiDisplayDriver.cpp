@@ -1,4 +1,5 @@
 #include "displayDriver.h"
+#include "logging.h"
 
 #ifdef T_HMI_DISPLAY
 #include <FS.h>
@@ -50,8 +51,8 @@ uint32_t readAdcVoltage(int pin) {
 
 void printBatteryVoltage() {
     uint32_t voltage = readAdcVoltage(BAT_ADC_PIN) * 2;
-    Serial.print("Battery voltage: ");
-    Serial.println((float)voltage/1000);
+    DEBUG_SERIAL_PRINT("Battery voltage: ");
+    DEBUG_SERIAL_PRINTLN((float)voltage/1000);
     delay(500);
 }
 
@@ -61,7 +62,7 @@ void t_hmiDisplay_Init(void)
   digitalWrite(PWR_ON_PIN, HIGH);
 
   delay(10);
-  Serial.println(F("Turn on the main power"));
+  DEBUG_SERIAL_PRINTLN(F("Turn on the main power"));
 
   pinMode(PWR_EN_PIN, OUTPUT);
   digitalWrite(PWR_EN_PIN, HIGH);
@@ -77,18 +78,18 @@ void t_hmiDisplay_Init(void)
   // if (render.loadFont(NotoSans_Bold, sizeof(NotoSans_Bold))) {
   if (render.loadFont(DigitalNumbers, sizeof(DigitalNumbers)))
   {
-    Serial.println("Initialise error");
+    DEBUG_SERIAL_PRINTLN("Initialise error");
     return;
   }
 
   #ifdef TOUCH_ENABLE
-  Serial.println(F("Initialize the touch screen"));
+  DEBUG_SERIAL_PRINTLN(F("Initialize the touch screen"));
   touchHandler.begin(HEIGHT, WIDTH);
   touchHandler.setScreenSwitchCallback(switchToNextScreen);
   touchHandler.setScreenSwitchAltCallback(toggleBottomScreen);
   #endif
 
-  Serial.println(F("Turn on the LCD backlight"));
+  DEBUG_SERIAL_PRINTLN(F("Turn on the LCD backlight"));
   pinMode(LED_PIN, OUTPUT);
   pinMode(BK_LIGHT_PIN, OUTPUT);
   digitalWrite(BK_LIGHT_PIN, BK_LIGHT_LEVEL);
@@ -100,7 +101,7 @@ void t_hmiDisplay_Init(void)
 void t_hmiDisplay_AlternateScreenState(void)
 {
   int screen_state = digitalRead(TFT_BL);
-  Serial.println("Switching display state");
+  DEBUG_SERIAL_PRINTLN("Switching display state");
   digitalWrite(TFT_BL, !screen_state);
 }
 
@@ -112,8 +113,8 @@ void t_hmiDisplay_AlternateRotation(void)
 
 void printPoolData()
 {
-  // Serial.print("\nPool ============ Free Heap:");
-  // Serial.println(ESP.getFreeHeap()); 
+  // DEBUG_SERIAL_PRINT("\nPool ============ Free Heap:");
+  // DEBUG_SERIAL_PRINTLN(ESP.getFreeHeap()); 
   pData = getPoolData();
 
   background.pushImage(0, 170, 320, 70, bottonPoolScreen);
@@ -131,8 +132,8 @@ void printPoolData()
 
 void printMemPoolFees(unsigned long mElapsed)
 {
-  // Serial.print("\nFees ============ Free Heap:");
-  // Serial.println(ESP.getFreeHeap()); 
+  // DEBUG_SERIAL_PRINT("\nFees ============ Free Heap:");
+  // DEBUG_SERIAL_PRINTLN(ESP.getFreeHeap()); 
 
   coin_data data = getCoinData(mElapsed);
 
@@ -161,7 +162,7 @@ void t_hmiDisplay_MinerScreen(unsigned long mElapsed)
 {
   mining_data data = getMiningData(mElapsed);
   background.pushImage(0, 0, MinerWidth, 170, MinerScreen);
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
    // Hashrate
   render.setFontSize(35);
@@ -215,7 +216,7 @@ void t_hmiDisplay_ClockScreen(unsigned long mElapsed)
   // Print background screen
   background.pushImage(0, 0, minerClockWidth, 170 /*minerClockHeight*/, minerClockScreen);
 
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   // Hashrate
@@ -256,7 +257,7 @@ void t_hmiDisplay_GlobalHashScreen(unsigned long mElapsed)
   // Print background screen
   background.pushImage(0, 0, globalHashWidth, 170 /* globalHashHeight */, globalHashScreen);
 
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   // Print BTC Price
@@ -321,7 +322,7 @@ void t_hmiDisplay_BTCprice(unsigned long mElapsed)
   // Print background screen
   background.pushImage(0, 0, priceScreenWidth, 170 /*priceScreenHeight*/, priceScreen);
 
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   // Hashrate

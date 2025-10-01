@@ -11,6 +11,7 @@
 #include "monitor.h"
 #include "drivers/storage/storage.h"
 #include "drivers/devices/device.h"
+#include "logging.h"
 
 extern uint32_t templates;
 extern uint32_t hashes;
@@ -48,10 +49,10 @@ void setup_monitor(void){
     // GMT +2 in seconds (zona horaria de Europa Central)
     timeClient.setTimeOffset(3600 * Settings.Timezone);
 
-    Serial.println("TimeClient setup done");
+    DEBUG_SERIAL_PRINTLN("TimeClient setup done");
 #ifdef SCREEN_WORKERS_ENABLE
     poolAPIUrl = getPoolAPIUrl();
-    Serial.println("poolAPIUrl: " + poolAPIUrl);
+    DEBUG_SERIAL_PRINTLN("poolAPIUrl: " + poolAPIUrl);
 #endif
 }
 
@@ -115,7 +116,7 @@ void updateGlobalData(void){
         
         http.end();
         } catch(...) {
-          Serial.println("Global data HTTP error caught");
+          DEBUG_SERIAL_PRINTLN("Global data HTTP error caught");
           http.end();
         }
     }
@@ -145,7 +146,7 @@ String getBlockHeight(void){
         }        
         http.end();
         } catch(...) {
-          Serial.println("Height HTTP error caught");
+          DEBUG_SERIAL_PRINTLN("Height HTTP error caught");
           http.end();
         }
     }
@@ -190,7 +191,7 @@ String getBTCprice(void){
         
         http.end();
         } catch(...) {
-          Serial.println("BTC price HTTP error caught");
+          DEBUG_SERIAL_PRINTLN("BTC price HTTP error caught");
           http.end();
         }
     }  
@@ -212,7 +213,7 @@ void getTime(unsigned long* currentHours, unsigned long* currentMinutes, unsigne
     if(WiFi.status() == WL_CONNECTED) {
         if(timeClient.update()) mTriggerUpdate = millis(); //NTP call to get current time
         initialTime = timeClient.getEpochTime(); // Guarda la hora inicial (en segundos desde 1970)
-        Serial.print("TimeClient NTPupdateTime ");
+        DEBUG_SERIAL_PRINT("TimeClient NTPupdateTime ");
     }
   }
 
@@ -446,10 +447,10 @@ pool_data getPoolData(void){
         http.setTimeout(10000);        
         try {          
           String btcWallet = Settings.BtcWallet;
-          // Serial.println(btcWallet);
+          // DEBUG_SERIAL_PRINTLN(btcWallet);
           if (btcWallet.indexOf(".")>0) btcWallet = btcWallet.substring(0,btcWallet.indexOf("."));
 #ifdef SCREEN_WORKERS_ENABLE
-          Serial.println("Pool API : " + poolAPIUrl+btcWallet);
+          DEBUG_SERIAL_PRINTLN("Pool API : " + poolAPIUrl+btcWallet);
           http.begin(poolAPIUrl+btcWallet);
 #else
           http.begin(String(getPublicPool)+btcWallet);
@@ -457,7 +458,7 @@ pool_data getPoolData(void){
           int httpCode = http.GET();
           if (httpCode == HTTP_CODE_OK) {
               String payload = http.getString();
-              // Serial.println(payload);
+              // DEBUG_SERIAL_PRINTLN(payload);
               StaticJsonDocument<300> filter;
               filter["bestDifficulty"] = true;
               filter["workersCount"] = true;
@@ -465,15 +466,15 @@ pool_data getPoolData(void){
               filter["workers"][0]["hashRate"] = true;
               StaticJsonDocument<2048> doc;
               deserializeJson(doc, payload, DeserializationOption::Filter(filter));
-              //Serial.println(serializeJsonPretty(doc, Serial));
+              //DEBUG_SERIAL_PRINTLN(serializeJsonPretty(doc, Serial));
               if (doc.containsKey("workersCount")) pData.workersCount = doc["workersCount"].as<int>();
               const JsonArray& workers = doc["workers"].as<JsonArray>();
               float totalhashs = 0;
               for (const JsonObject& worker : workers) {
                 totalhashs += worker["hashRate"].as<double>();
-                /* Serial.print(worker["sessionId"].as<String>()+": ");
-                Serial.print(" - "+worker["hashRate"].as<String>()+": ");
-                Serial.println(totalhashs); */
+                /* DEBUG_SERIAL_PRINT(worker["sessionId"].as<String>()+": ");
+                DEBUG_SERIAL_PRINT(" - "+worker["hashRate"].as<String>()+": ");
+                DEBUG_SERIAL_PRINTLN(totalhashs); */
               }
               char totalhashs_s[16] = {0};
               suffix_string(totalhashs, totalhashs_s, 16, 0);
@@ -488,12 +489,12 @@ pool_data getPoolData(void){
               }
               doc.clear();
               mPoolUpdate = millis();
-              Serial.println("\n####### Pool Data OK!");               
+              DEBUG_SERIAL_PRINTLN("\n####### Pool Data OK!");               
           } else {
-              Serial.println("\n####### Pool Data HTTP Error!");    
-              /* Serial.println(httpCode);
+              DEBUG_SERIAL_PRINTLN("\n####### Pool Data HTTP Error!");    
+              /* DEBUG_SERIAL_PRINTLN(httpCode);
               String payload = http.getString();
-              Serial.println(payload); */
+              DEBUG_SERIAL_PRINTLN(payload); */
               // mPoolUpdate = millis();
               pData.bestDifficulty = "P";
               pData.workersHash = "E";
@@ -503,7 +504,7 @@ pool_data getPoolData(void){
           }
           http.end();
         } catch(...) {
-          Serial.println("####### Pool Error!");          
+          DEBUG_SERIAL_PRINTLN("####### Pool Error!");          
           // mPoolUpdate = millis();
           pData.bestDifficulty = "P";
           pData.workersHash = "Error";

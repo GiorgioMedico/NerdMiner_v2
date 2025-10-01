@@ -1,4 +1,5 @@
 #include "displayDriver.h"
+#include "logging.h"
 
 #ifdef T_QT_DISPLAY
 
@@ -32,7 +33,7 @@ void t_qtDisplay_Init(void)
   // if (render.loadFont(NotoSans_Bold, sizeof(NotoSans_Bold))) {
   if (render.loadFont(DigitalNumbers, sizeof(DigitalNumbers)))
   {
-    Serial.println("Initialise error");
+    DEBUG_SERIAL_PRINTLN("Initialise error");
     return;
   }
 }
@@ -40,7 +41,7 @@ void t_qtDisplay_Init(void)
 void t_qtDisplay_AlternateScreenState(void)
 {
   int screen_state = digitalRead(TFT_BL);
-  Serial.println("Switching display state");
+  DEBUG_SERIAL_PRINTLN("Switching display state");
   digitalWrite(TFT_BL, !screen_state);
 }
 
@@ -56,7 +57,7 @@ void t_qtDisplay_MinerScreen(unsigned long mElapsed)
   // Print background screen
   background.pushImage(0, 0, MinerWidth, MinerHeight, MinerScreen);
 
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
     //Hashrate
@@ -93,7 +94,7 @@ void t_qtDisplay_ClockScreen(unsigned long mElapsed)
     // Print background screen
     background.pushImage(0, 0, minerClockWidth, minerClockHeight, minerClockScreen);
 
-    // Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+    // DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
     //             data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
     render.setCursor(0, 0);

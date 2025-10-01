@@ -1,4 +1,5 @@
 #include "displayDriver.h"
+#include "logging.h"
 
 #ifdef M5STICKCPLUS_DISPLAY
 
@@ -37,7 +38,7 @@ void m5stickCPlusDriver_Init(void)
   // Load the font and check it can be read OK
   if (render.loadFont(DigitalNumbers, sizeof(DigitalNumbers)))
   {
-    Serial.println("Initialise error");
+    DEBUG_SERIAL_PRINTLN("Initialise error");
     while(1);
     return;
   }
@@ -68,7 +69,7 @@ void m5stickCPlusDriver_MinerScreen(unsigned long mElapsed)
   // Print background screen
   background.pushImage(0, 0, MinerWidth, MinerHeight, MinerScreen);
 
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   // Hashrate
@@ -116,7 +117,7 @@ void m5stickCPlusDriver_ClockScreen(unsigned long mElapsed)
   // Print background screen
   background.pushImage(0, 0, minerClockWidth, minerClockHeight, minerClockScreen);
 
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   // Hashrate
@@ -154,7 +155,7 @@ void m5stickCPlusDriver_GlobalHashScreen(unsigned long mElapsed)
   // Print background screen
   background.pushImage(0, 0, globalHashWidth, globalHashHeight, globalHashScreen);
 
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   // Print BTC Price
@@ -206,7 +207,7 @@ void tDisplay_BTCprice(unsigned long mElapsed)
   // Print background screen
   background.pushImage(0, 0, priceScreenWidth, priceScreenHeight, priceScreen);
 
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   // Hashrate

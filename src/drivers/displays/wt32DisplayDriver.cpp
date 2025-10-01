@@ -1,4 +1,5 @@
 #include "displayDriver.h"
+#include "logging.h"
 
 #ifdef WT32_DISPLAY
 
@@ -244,7 +245,7 @@ void onBrightnessChange(lv_event_t *e)
 
 void wt32Display_Init(void)
 {
-  Serial.println("M5stack display driver initialized");
+  DEBUG_SERIAL_PRINTLN("M5stack display driver initialized");
   tft.init();
   tft.initDMA();
   tft.startWrite();
@@ -254,18 +255,18 @@ void wt32Display_Init(void)
   if (tft.width() < tft.height())
     tft.setRotation(tft.getRotation() ^ 1);
 
-  Serial.print("Width: ");
-  Serial.print(screenWidth);
-  Serial.print("\tHeight: ");
-  Serial.println(screenHeight);
+  DEBUG_SERIAL_PRINT("Width: ");
+  DEBUG_SERIAL_PRINT(screenWidth);
+  DEBUG_SERIAL_PRINT("\tHeight: ");
+  DEBUG_SERIAL_PRINTLN(screenHeight);
 
   if (!disp_draw_buf)
   {
-    Serial.println("LVGL disp_draw_buf allocate failed!");
+    DEBUG_SERIAL_PRINTLN("LVGL disp_draw_buf allocate failed!");
   }
   else
   {
-    Serial.print("Display buffer size: ");
+    DEBUG_SERIAL_PRINT("Display buffer size: ");
     lv_disp_draw_buf_init(&draw_buf, disp_draw_buf, disp_draw_buf2, screenWidth * SCR);
     /* Initialize the display */
     lv_disp_drv_init(&disp_drv);
@@ -302,9 +303,9 @@ void wt32Display_NoScreen(unsigned long mElapsed)
   mining_data data = getMiningData(mElapsed);
 
   // Print hashrate to serial
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
-  //Serial.printf(">>> Temperature: %s\n", data.temp.c_str());
+  //DEBUG_SERIAL_PRINTF(">>> Temperature: %s\n", data.temp.c_str());
 
   lv_label_set_text(ui_lblhashrate, data.currentHashRate.c_str());
   lv_bar_set_value(ui_barhashrate, data.currentHashRate.toInt(), LV_ANIM_ON);
@@ -342,9 +343,9 @@ void wt32Display_NoScreen(unsigned long mElapsed)
 
 void wt32Display_LoadingScreen(void)
 {
-  Serial.println("Initializing...");
-  Serial.print("Firmware Version: ");
-  Serial.println(AUTO_VERSION);
+  DEBUG_SERIAL_PRINTLN("Initializing...");
+  DEBUG_SERIAL_PRINT("Firmware Version: ");
+  DEBUG_SERIAL_PRINTLN(AUTO_VERSION);
   lv_label_set_text(ui_lblssid, "HanSoloAP");
   lv_label_set_text(ui_lblpassword, "MineYourCoins");
   lv_label_set_text(ui_lblversion, AUTO_VERSION);
@@ -357,7 +358,7 @@ void wt32Display_LoadingScreen(void)
 
 void wt32Display_SetupScreen(void)
 {
-  Serial.println("Setup...");
+  DEBUG_SERIAL_PRINTLN("Setup...");
 }
 
 void wt32Display_DoLedStuff(unsigned long frame)

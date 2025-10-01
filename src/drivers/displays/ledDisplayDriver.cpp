@@ -1,4 +1,5 @@
 #include "displayDriver.h"
+#include "logging.h"
 
 #ifdef LED_DISPLAY
 
@@ -26,7 +27,7 @@ extern monitor_data mMonitor;
 
 void ledDisplay_Init(void)
 {
-  Serial.println("Led display driver initialized");
+  DEBUG_SERIAL_PRINTLN("Led display driver initialized");
   #ifdef USE_LED
   FastLED.addLeds<RGB_LED_CLASS, RGB_LED_PIN, RGB_LED_ORDER>(&leds, 1);
   FastLED.show();
@@ -35,7 +36,7 @@ void ledDisplay_Init(void)
 
 void ledDisplay_AlternateScreenState(void)
 {
-  Serial.println("Switching display state");
+  DEBUG_SERIAL_PRINTLN("Switching display state");
   ledOn = !ledOn;
 }
 
@@ -48,26 +49,26 @@ void ledDisplay_NoScreen(unsigned long mElapsed)
   mining_data data = getMiningData(mElapsed);
 
   // Print hashrate to serial
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   // Print extended data to serial for no display devices
-  Serial.printf(">>> Valid blocks: %s\n", data.valids.c_str());
-  Serial.printf(">>> Block templates: %s\n", data.templates.c_str());
-  Serial.printf(">>> Best difficulty: %s\n", data.bestDiff.c_str());
-  Serial.printf(">>> 32Bit shares: %s\n", data.completedShares.c_str());
-  Serial.printf(">>> Temperature: %s\n", data.temp.c_str());
-  Serial.printf(">>> Total MHashes: %s\n", data.totalMHashes.c_str());
-  Serial.printf(">>> Time mining: %s\n", data.timeMining.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Valid blocks: %s\n", data.valids.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Block templates: %s\n", data.templates.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Best difficulty: %s\n", data.bestDiff.c_str());
+  DEBUG_SERIAL_PRINTF(">>> 32Bit shares: %s\n", data.completedShares.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Temperature: %s\n", data.temp.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Total MHashes: %s\n", data.totalMHashes.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Time mining: %s\n", data.timeMining.c_str());
 }
 void ledDisplay_LoadingScreen(void)
 {
-  Serial.println("Initializing...");
+  DEBUG_SERIAL_PRINTLN("Initializing...");
 }
 
 void ledDisplay_SetupScreen(void)
 {
-  Serial.println("Setup...");
+  DEBUG_SERIAL_PRINTLN("Setup...");
 }
 
 // Variables para controlar el parpadeo con millis()

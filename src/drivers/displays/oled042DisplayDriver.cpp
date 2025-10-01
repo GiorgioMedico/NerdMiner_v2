@@ -1,5 +1,6 @@
 
 #include "displayDriver.h"
+#include "logging.h"
 
 #ifdef OLED_042_DISPLAY
 
@@ -50,22 +51,22 @@ void serialPrint(unsigned long mElapsed) {
   mining_data data = getMiningData(mElapsed);
 
   // Print hashrate to serial
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   // Print extended data to serial for no display devices
-  Serial.printf(">>> Valid blocks: %s\n", data.valids.c_str());
-  Serial.printf(">>> Block templates: %s\n", data.templates.c_str());
-  Serial.printf(">>> Best difficulty: %s\n", data.bestDiff.c_str());
-  Serial.printf(">>> 32Bit shares: %s\n", data.completedShares.c_str());
-  Serial.printf(">>> Temperature: %s\n", data.temp.c_str());
-  Serial.printf(">>> Total MHashes: %s\n", data.totalMHashes.c_str());
-  Serial.printf(">>> Time mining: %s\n", data.timeMining.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Valid blocks: %s\n", data.valids.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Block templates: %s\n", data.templates.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Best difficulty: %s\n", data.bestDiff.c_str());
+  DEBUG_SERIAL_PRINTF(">>> 32Bit shares: %s\n", data.completedShares.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Temperature: %s\n", data.temp.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Total MHashes: %s\n", data.totalMHashes.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Time mining: %s\n", data.timeMining.c_str());
 }
 
 void oledDisplay_Init(void)
 {
-  Serial.println("OLED 0.42 display driver initialized");
+  DEBUG_SERIAL_PRINTLN("OLED 0.42 display driver initialized");
   Wire.begin(SDA_PIN, SCL_PIN);
   u8g2.begin();
   u8g2.clear();
@@ -75,7 +76,7 @@ void oledDisplay_Init(void)
 
 void oledDisplay_AlternateScreenState(void)
 {
-  Serial.println("Switching display state");
+  DEBUG_SERIAL_PRINTLN("Switching display state");
 }
 
 void oledDisplay_AlternateRotation(void)
@@ -112,7 +113,7 @@ void oledDisplay_Screen2(unsigned long mElapsed)
 
 void oledDisplay_LoadingScreen(void)
 {
-  Serial.println("Initializing...");
+  DEBUG_SERIAL_PRINTLN("Initializing...");
   u8g2.clearBuffer();
   u8g2.drawXBMP(20,5,30,30, btc_icon);
   u8g2.sendBuffer();
@@ -120,7 +121,7 @@ void oledDisplay_LoadingScreen(void)
 
 void oledDisplay_SetupScreen(void)
 {
-  Serial.println("Setup...");
+  DEBUG_SERIAL_PRINTLN("Setup...");
   u8g2.clearBuffer();
   u8g2.drawXBMP(20,0,30,30, setup_icon);
   u8g2.setFont(u8g2_font_helvB08_tf);

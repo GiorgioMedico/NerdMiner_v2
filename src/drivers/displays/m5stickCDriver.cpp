@@ -1,4 +1,5 @@
 #include "displayDriver.h"
+#include "logging.h"
 
 #ifdef M5STICKC_DISPLAY
 
@@ -118,7 +119,7 @@ void m5stickCDriver_GlobalHashScreen(unsigned long mElapsed)
 {
   coin_data data = getCoinData(mElapsed);
 
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   M5.Lcd.fillScreen(BLACK);

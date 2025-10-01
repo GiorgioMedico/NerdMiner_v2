@@ -10,6 +10,7 @@
 #include "utils.h"
 #include "version.h"
 #include <mutex>
+#include "logging.h"
 
 
 
@@ -48,7 +49,7 @@ bool checkError(const StaticJsonDocument<BUFFER_JSON_DOC> doc) {
 
   if (doc["error"].size() == 0) return false;
 
-  Serial.printf("ERROR: %d | reason: %s \n", (const int) doc["error"][0], (const char*) doc["error"][1]);
+  DEBUG_SERIAL_PRINTF("ERROR: %d | reason: %s \n", (const int) doc["error"][0], (const char*) doc["error"][1]);
 
   return true;
 }
@@ -71,12 +72,12 @@ bool tx_mining_subscribe(WiFiClient& client, mining_subscribe& mSubscribe)
     #endif
 
     if (written < 0 || written >= BUFFER) {
-        Serial.printf("ERROR: Buffer overflow in tx_mining_subscribe\n");
+        DEBUG_SERIAL_PRINTF("ERROR: Buffer overflow in tx_mining_subscribe\n");
         return false;
     }
 
-    Serial.printf("[WORKER] ==> Mining subscribe\n");
-    Serial.print("  Sending  : "); Serial.println(payload);
+    DEBUG_SERIAL_PRINTF("[WORKER] ==> Mining subscribe\n");
+    DEBUG_SERIAL_PRINT("  Sending  : "); DEBUG_SERIAL_PRINTLN(payload);
     client.print(payload);
     
     vTaskDelay(200 / portTICK_PERIOD_MS); //Small delay
@@ -85,13 +86,13 @@ bool tx_mining_subscribe(WiFiClient& client, mining_subscribe& mSubscribe)
     if(!parse_mining_subscribe(line, mSubscribe)) return false;
 
   
-    Serial.print("    sub_details: "); Serial.println(mSubscribe.sub_details);
-    Serial.print("    extranonce1: "); Serial.println(mSubscribe.extranonce1);
-    Serial.print("    extranonce2_size: "); Serial.println(mSubscribe.extranonce2_size);
+    DEBUG_SERIAL_PRINT("    sub_details: "); DEBUG_SERIAL_PRINTLN(mSubscribe.sub_details);
+    DEBUG_SERIAL_PRINT("    extranonce1: "); DEBUG_SERIAL_PRINTLN(mSubscribe.extranonce1);
+    DEBUG_SERIAL_PRINT("    extranonce2_size: "); DEBUG_SERIAL_PRINTLN(mSubscribe.extranonce2_size);
 
     if((mSubscribe.extranonce1.length() == 0) ) {
-        Serial.printf("[WORKER] >>>>>>>>> Work aborted\n");
-        Serial.printf("extranonce1 length: %u \n", mSubscribe.extranonce1.length());
+        DEBUG_SERIAL_PRINTF("[WORKER] >>>>>>>>> Work aborted\n");
+        DEBUG_SERIAL_PRINTF("extranonce1 length: %u \n", mSubscribe.extranonce1.length());
         return false;
     }
     return true;
@@ -100,7 +101,7 @@ bool tx_mining_subscribe(WiFiClient& client, mining_subscribe& mSubscribe)
 bool parse_mining_subscribe(const String& line, mining_subscribe& mSubscribe)
 {
     if(!verifyPayload(line)) return false;
-    Serial.print("  Receiving: "); Serial.println(line);
+    DEBUG_SERIAL_PRINT("  Receiving: "); DEBUG_SERIAL_PRINTLN(line);
 
     StaticJsonDocument<BUFFER_JSON_DOC> doc;
     DeserializationError error = deserializeJson(doc, line);
@@ -115,17 +116,17 @@ bool parse_mining_subscribe(const String& line, mining_subscribe& mSubscribe)
 
     // Validate nested JSON structure before accessing
     if (!doc["result"].is<JsonArray>() || doc["result"].size() < 3) {
-        Serial.println("ERROR: Invalid result array structure");
+        DEBUG_SERIAL_PRINTLN("ERROR: Invalid result array structure");
         return false;
     }
 
     if (!doc["result"][0].is<JsonArray>() || doc["result"][0].size() < 1) {
-        Serial.println("ERROR: Invalid result[0] array structure");
+        DEBUG_SERIAL_PRINTLN("ERROR: Invalid result[0] array structure");
         return false;
     }
 
     if (!doc["result"][0][0].is<JsonArray>() || doc["result"][0][0].size() < 2) {
-        Serial.println("ERROR: Invalid result[0][0] array structure");
+        DEBUG_SERIAL_PRINTLN("ERROR: Invalid result[0][0] array structure");
         return false;
     }
 
@@ -174,11 +175,11 @@ bool tx_mining_auth(WiFiClient& client, const char * user, const char * pass)
 
     // Sanitize user and password inputs
     if (!sanitize_json_string(user, 128)) {
-        Serial.printf("ERROR: Invalid username for mining.authorize\n");
+        DEBUG_SERIAL_PRINTF("ERROR: Invalid username for mining.authorize\n");
         return false;
     }
     if (!sanitize_json_string(pass, 64)) {
-        Serial.printf("ERROR: Invalid password for mining.authorize\n");
+        DEBUG_SERIAL_PRINTF("ERROR: Invalid password for mining.authorize\n");
         return false;
     }
 
@@ -188,12 +189,12 @@ bool tx_mining_auth(WiFiClient& client, const char * user, const char * pass)
       user, pass, id);
 
     if (written < 0 || written >= BUFFER) {
-        Serial.printf("ERROR: Buffer overflow in tx_mining_auth\n");
+        DEBUG_SERIAL_PRINTF("ERROR: Buffer overflow in tx_mining_auth\n");
         return false;
     }
 
-    Serial.printf("[WORKER] ==> Autorize work\n");
-    Serial.print("  Sending  : "); Serial.println(payload);
+    DEBUG_SERIAL_PRINTF("[WORKER] ==> Autorize work\n");
+    DEBUG_SERIAL_PRINT("  Sending  : "); DEBUG_SERIAL_PRINTLN(payload);
     client.print(payload);
 
     vTaskDelay(200 / portTICK_PERIOD_MS); //Small delay
@@ -208,7 +209,7 @@ bool tx_mining_auth(WiFiClient& client, const char * user, const char * pass)
 stratum_method parse_mining_method(const String& line)
 {
     if(!verifyPayload(line)) return STRATUM_PARSE_ERROR;
-    Serial.print("  Receiving: "); Serial.println(line);
+    DEBUG_SERIAL_PRINT("  Receiving: "); DEBUG_SERIAL_PRINTLN(line);
 
     StaticJsonDocument<BUFFER_JSON_DOC> doc;
     DeserializationError error = deserializeJson(doc, line);
@@ -238,7 +239,7 @@ stratum_method parse_mining_method(const String& line)
 
 bool parse_mining_notify(const String& line, mining_job& mJob)
 {
-    Serial.println("    Parsing Method [MINING NOTIFY]");
+    DEBUG_SERIAL_PRINTLN("    Parsing Method [MINING NOTIFY]");
     if(!verifyPayload(line)) return false;
 
     StaticJsonDocument<BUFFER_JSON_DOC> doc;
@@ -254,7 +255,7 @@ bool parse_mining_notify(const String& line, mining_job& mJob)
 
     // Validate params array size
     if (!doc["params"].is<JsonArray>() || doc["params"].size() < 9) {
-        Serial.println("ERROR: Invalid params array in mining.notify");
+        DEBUG_SERIAL_PRINTLN("ERROR: Invalid params array in mining.notify");
         return false;
     }
 
@@ -264,25 +265,25 @@ bool parse_mining_notify(const String& line, mining_job& mJob)
         JsonArray merkle_array = doc["params"][4].as<JsonArray>();
         size_t merkle_size = merkle_array.size();
         if (merkle_size > MAX_MERKLE_BRANCHES) {
-            Serial.printf("ERROR: Merkle branch too large: %u > %u\n", merkle_size, MAX_MERKLE_BRANCHES);
+            DEBUG_SERIAL_PRINTF("ERROR: Merkle branch too large: %u > %u\n", merkle_size, MAX_MERKLE_BRANCHES);
             return false;
         }
         for (size_t idx = 0; idx < merkle_size; ++idx) {
             const char* branch_entry = merkle_array[idx];
             if (!branch_entry) {
-                Serial.println("ERROR: Null merkle branch entry");
+                DEBUG_SERIAL_PRINTLN("ERROR: Null merkle branch entry");
                 return false;
             }
             String branch_value(branch_entry);
             if (branch_value.length() > MAX_HASH_LEN) {
-                Serial.println("ERROR: Merkle branch entry too long");
+                DEBUG_SERIAL_PRINTLN("ERROR: Merkle branch entry too long");
                 return false;
             }
             mJob.merkle_branch[idx] = branch_value;
         }
         mJob.merkle_branch_len = merkle_size;
     } else if (!doc["params"][4].isNull()) {
-        Serial.println("ERROR: Invalid merkle_branch structure");
+        DEBUG_SERIAL_PRINTLN("ERROR: Invalid merkle_branch structure");
         return false;
     }
 
@@ -298,7 +299,7 @@ bool parse_mining_notify(const String& line, mining_job& mJob)
     if (job_id.length() > MAX_JOB_ID_LEN || prev_block_hash.length() > MAX_HASH_LEN ||
         coinb1.length() > MAX_COINBASE_LEN || coinb2.length() > MAX_COINBASE_LEN ||
         version.length() > MAX_VERSION_LEN || nbits.length() > MAX_NBITS_LEN || ntime.length() > MAX_NTIME_LEN) {
-        Serial.println("ERROR: String field too long in mining.notify");
+        DEBUG_SERIAL_PRINTLN("ERROR: String field too long in mining.notify");
         return false;
     }
 
@@ -312,20 +313,20 @@ bool parse_mining_notify(const String& line, mining_job& mJob)
     mJob.clean_jobs = doc["params"][8]; //bool
 
     #ifdef DEBUG_MINING
-    Serial.print("    job_id: "); Serial.println(mJob.job_id);
-    Serial.print("    prevhash: "); Serial.println(mJob.prev_block_hash);
-    Serial.print("    coinb1: "); Serial.println(mJob.coinb1);
-    Serial.print("    coinb2: "); Serial.println(mJob.coinb2);
-    Serial.print("    merkle_branch size: "); Serial.println(mJob.merkle_branch_len);
-    Serial.print("    version: "); Serial.println(mJob.version);
-    Serial.print("    nbits: "); Serial.println(mJob.nbits);
-    Serial.print("    ntime: "); Serial.println(mJob.ntime);
-    Serial.print("    clean_jobs: "); Serial.println(mJob.clean_jobs);
+    DEBUG_SERIAL_PRINT("    job_id: "); DEBUG_SERIAL_PRINTLN(mJob.job_id);
+    DEBUG_SERIAL_PRINT("    prevhash: "); DEBUG_SERIAL_PRINTLN(mJob.prev_block_hash);
+    DEBUG_SERIAL_PRINT("    coinb1: "); DEBUG_SERIAL_PRINTLN(mJob.coinb1);
+    DEBUG_SERIAL_PRINT("    coinb2: "); DEBUG_SERIAL_PRINTLN(mJob.coinb2);
+    DEBUG_SERIAL_PRINT("    merkle_branch size: "); DEBUG_SERIAL_PRINTLN(mJob.merkle_branch_len);
+    DEBUG_SERIAL_PRINT("    version: "); DEBUG_SERIAL_PRINTLN(mJob.version);
+    DEBUG_SERIAL_PRINT("    nbits: "); DEBUG_SERIAL_PRINTLN(mJob.nbits);
+    DEBUG_SERIAL_PRINT("    ntime: "); DEBUG_SERIAL_PRINTLN(mJob.ntime);
+    DEBUG_SERIAL_PRINT("    clean_jobs: "); DEBUG_SERIAL_PRINTLN(mJob.clean_jobs);
     #endif
 
     //Check if parameters where correctly received
     if (checkError(doc)) {
-      Serial.printf("[WORKER] >>>>>>>>> Work aborted\n");
+      DEBUG_SERIAL_PRINTF("[WORKER] >>>>>>>>> Work aborted\n");
       return false;
     }
 
@@ -340,7 +341,7 @@ bool tx_mining_submit(WiFiClient& client, mining_subscribe mWorker, mining_job m
     // Validate wName is null-terminated and not too long
     size_t wname_len = strnlen(mWorker.wName, sizeof(mWorker.wName));
     if (wname_len >= sizeof(mWorker.wName)) {
-        Serial.printf("ERROR: wName not properly null-terminated\n");
+        DEBUG_SERIAL_PRINTF("ERROR: wName not properly null-terminated\n");
         return false;
     }
 
@@ -351,7 +352,7 @@ bool tx_mining_submit(WiFiClient& client, mining_subscribe mWorker, mining_job m
     char nonce_hex[9] = {0};
     int nonce_written = snprintf(nonce_hex, sizeof(nonce_hex), "%08lx", nonce);
     if (nonce_written < 0 || nonce_written >= static_cast<int>(sizeof(nonce_hex))) {
-        Serial.printf("ERROR: Failed to format nonce\n");
+        DEBUG_SERIAL_PRINTF("ERROR: Failed to format nonce\n");
         return false;
     }
 
@@ -365,20 +366,20 @@ bool tx_mining_submit(WiFiClient& client, mining_subscribe mWorker, mining_job m
         );
 
     if (written < 0 || written >= BUFFER) {
-        Serial.printf("ERROR: Buffer overflow in tx_mining_submit\n");
+        DEBUG_SERIAL_PRINTF("ERROR: Buffer overflow in tx_mining_submit\n");
         return false;
     }
 
-    Serial.print("  Sending  : "); Serial.print(payload);
+    DEBUG_SERIAL_PRINT("  Sending  : "); DEBUG_SERIAL_PRINT(payload);
     client.print(payload);
-    //Serial.print("  Receiving: "); Serial.println(client.readStringUntil('\n'));
+    //DEBUG_SERIAL_PRINT("  Receiving: "); DEBUG_SERIAL_PRINTLN(client.readStringUntil('\n'));
 
     return true;
 }
 
 bool parse_mining_set_difficulty(const String& line, double& difficulty)
 {
-    Serial.println("    Parsing Method [SET DIFFICULTY]");
+    DEBUG_SERIAL_PRINTLN("    Parsing Method [SET DIFFICULTY]");
     if(!verifyPayload(line)) return false;
 
     StaticJsonDocument<BUFFER_JSON_DOC> doc;
@@ -392,7 +393,7 @@ bool parse_mining_set_difficulty(const String& line, double& difficulty)
         return false;
     }
 
-    Serial.print("    difficulty: "); Serial.println((double)doc["params"][0],12);
+    DEBUG_SERIAL_PRINT("    difficulty: "); DEBUG_SERIAL_PRINTLN((double)doc["params"][0],12);
     difficulty = (double)doc["params"][0];
 
     return true;
@@ -406,11 +407,11 @@ bool tx_suggest_difficulty(WiFiClient& client, double difficulty)
     int written = snprintf(payload, BUFFER, "{\"id\":%d,\"method\":\"mining.suggest_difficulty\",\"params\":[%.10g]}\n", id, difficulty);
 
     if (written < 0 || written >= BUFFER) {
-        Serial.printf("ERROR: Buffer overflow in tx_suggest_difficulty\n");
+        DEBUG_SERIAL_PRINTF("ERROR: Buffer overflow in tx_suggest_difficulty\n");
         return false;
     }
 
-    Serial.print("  Sending  : "); Serial.print(payload);
+    DEBUG_SERIAL_PRINT("  Sending  : "); DEBUG_SERIAL_PRINT(payload);
     return client.print(payload);
 
 }

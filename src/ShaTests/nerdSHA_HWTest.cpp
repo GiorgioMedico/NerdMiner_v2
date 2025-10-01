@@ -1,3 +1,4 @@
+#include "logging.h"
 #ifdef HW_SHA256_TEST
 
 #include <soc/soc.h>
@@ -509,19 +510,19 @@ IRAM_ATTR void HwShaTest()
 
   uint32_t time_end = micros();
   double hash_rate = ((double)test_count * 1000000) / (double)(time_end - time_start);
-  Serial.print("Hashrate=");
-  Serial.print(hash_rate/1000);
-  Serial.println("KH/s");
+  DEBUG_SERIAL_PRINT("Hashrate=");
+  DEBUG_SERIAL_PRINT(hash_rate/1000);
+  DEBUG_SERIAL_PRINTLN("KH/s");
 
-  Serial.print("interResult: ");
+  DEBUG_SERIAL_PRINT("interResult: ");
   for (size_t i = 0; i < 32; i++)
-    Serial.printf("%02x", interResult[i]);
-  Serial.println("");
+    DEBUG_SERIAL_PRINTF("%02x", interResult[i]);
+  DEBUG_SERIAL_PRINTLN("");
 
-    Serial.print("hash: ");
+    DEBUG_SERIAL_PRINT("hash: ");
   for (size_t i = 0; i < 32; i++)
-    Serial.printf("%02x", hash[i]);
-  Serial.println("");
+    DEBUG_SERIAL_PRINTF("%02x", hash[i]);
+  DEBUG_SERIAL_PRINTLN("");
   
   //should be
   //54cd9f1ebc3db9a626688e5bb91d808abbd4079b2cba7f43fa08bfced300ef19

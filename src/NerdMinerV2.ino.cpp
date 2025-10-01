@@ -15,6 +15,7 @@
 #include "drivers/storage/SDCard.h"
 #include "ShaTests/nerdSHA_HWTest.h"
 #include "timeconst.h"
+#include "logging.h"
 
 #ifdef TOUCH_ENABLE
 #include "TouchHandler.h"
@@ -107,7 +108,7 @@ void setup()
   #endif
 
   /******** INIT NERDMINER ************/
-  Serial.println("NerdMiner v2 starting......");
+  DEBUG_SERIAL_PRINTLN("NerdMiner v2 starting......");
 
   /******** INIT DISPLAY ************/
   initDisplay();
@@ -130,8 +131,8 @@ void setup()
   /******** CREATE TASK TO PRINT SCREEN *****/
   //tft.pushImage(0, 0, MinerWidth, MinerHeight, MinerScreen);
   // Higher prio monitor task
-  Serial.println("");
-  Serial.println("Initiating tasks...");
+  DEBUG_SERIAL_PRINTLN("");
+  DEBUG_SERIAL_PRINTLN("Initiating tasks...");
   static const char monitor_name[] = "(Monitor)";
   #if defined(CONFIG_IDF_TARGET_ESP32)
   // Increased stack for ESP32 classic due to NVS operations  

@@ -1,4 +1,5 @@
 #include "displayDriver.h"
+#include "logging.h"
 
 #if defined ESP32_2432S028R || ESP32_2432S028_2USB
 
@@ -39,19 +40,19 @@ extern TSettings Settings;
 bool hasChangedScreen = true;
 
 void getChipInfo(void){
-  Serial.print("Chip: ");
-  Serial.println(ESP.getChipModel());
-  Serial.print("ChipRevision: ");
-  Serial.println(ESP.getChipRevision());
-  Serial.print("Psram size: ");
-  Serial.print(ESP.getPsramSize() / 1024);
-  Serial.println("KB");
-  Serial.print("Flash size: ");
-  Serial.print(ESP.getFlashChipSize() / 1024);
-  Serial.println("KB");
-  Serial.print("CPU frequency: ");
-  Serial.print(ESP.getCpuFreqMHz());
-  Serial.println("MHz");  
+  DEBUG_SERIAL_PRINT("Chip: ");
+  DEBUG_SERIAL_PRINTLN(ESP.getChipModel());
+  DEBUG_SERIAL_PRINT("ChipRevision: ");
+  DEBUG_SERIAL_PRINTLN(ESP.getChipRevision());
+  DEBUG_SERIAL_PRINT("Psram size: ");
+  DEBUG_SERIAL_PRINT(ESP.getPsramSize() / 1024);
+  DEBUG_SERIAL_PRINTLN("KB");
+  DEBUG_SERIAL_PRINT("Flash size: ");
+  DEBUG_SERIAL_PRINT(ESP.getFlashChipSize() / 1024);
+  DEBUG_SERIAL_PRINTLN("KB");
+  DEBUG_SERIAL_PRINT("CPU frequency: ");
+  DEBUG_SERIAL_PRINT(ESP.getCpuFreqMHz());
+  DEBUG_SERIAL_PRINTLN("MHz");  
 }
 
 void esp32_2432S028R_Init(void)
@@ -60,8 +61,8 @@ void esp32_2432S028R_Init(void)
   tft.init();
   if (nvMem.loadConfig(&Settings))
     {      
-     // Serial.print("Invert Colors: ");
-     // Serial.println(Settings.invertColors);  
+     // DEBUG_SERIAL_PRINT("Invert Colors: ");
+     // DEBUG_SERIAL_PRINTLN(Settings.invertColors);  
       invertColors = Settings.invertColors;           
     }  
   tft.invertDisplay(invertColors);
@@ -97,7 +98,7 @@ void esp32_2432S028R_Init(void)
   // if (render.loadFont(NotoSans_Bold, sizeof(NotoSans_Bold)))
   if (render.loadFont(DigitalNumbers, sizeof(DigitalNumbers)))
   {
-    Serial.println("Initialise error");
+    DEBUG_SERIAL_PRINTLN("Initialise error");
     return;
   }
   
@@ -110,12 +111,12 @@ void esp32_2432S028R_Init(void)
   pData.bestDifficulty = "0";
   pData.workersHash = "0";
   pData.workersCount = 0;
-  //Serial.println("=========== Fim Display ==============") ;
+  //DEBUG_SERIAL_PRINTLN("=========== Fim Display ==============") ;
 }
 
 void esp32_2432S028R_AlternateScreenState(void)
 {
-  Serial.println("Switching display state");
+  DEBUG_SERIAL_PRINTLN("Switching display state");
   int screen_state_duty = ledcRead(0);
   // Switching the duty cycle for the ledc channel, where the TFT_BL pin is attached.
   if (screen_state_duty > 0) {
@@ -134,9 +135,9 @@ void esp32_2432S028R_AlternateRotation(void)
 bool bottomScreenBlue = true;
 
 void printheap(){
-  Serial.print("$$ Free Heap:");
-  Serial.println(ESP.getFreeHeap()); 
-  // Serial.printf("### stack WMark usage: %d\n", uxTaskGetStackHighWaterMark(NULL));
+  DEBUG_SERIAL_PRINT("$$ Free Heap:");
+  DEBUG_SERIAL_PRINTLN(ESP.getFreeHeap()); 
+  // DEBUG_SERIAL_PRINTF("### stack WMark usage: %d\n", uxTaskGetStackHighWaterMark(NULL));
 }
 
 bool createBackgroundSprite(int16_t wdt, int16_t hgt){  // Set the background and link the render, used multiple times to fit in heap
@@ -148,8 +149,8 @@ bool createBackgroundSprite(int16_t wdt, int16_t hgt){  // Set the background an
       render.setDrawer(background); // Link drawing object to background instance (so font will be rendered on background)
       render.setLineSpaceRatio(0.9);      
   } else {
-    Serial.println("#### Sprite Error ####");
-    Serial.printf("Size w:%d h:%d \n", wdt, hgt);
+    DEBUG_SERIAL_PRINTLN("#### Sprite Error ####");
+    DEBUG_SERIAL_PRINTF("Size w:%d h:%d \n", wdt, hgt);
     printheap();
   }
   return background.created();
@@ -163,8 +164,8 @@ void printPoolData(){
           pData = getPoolData();             
           background.createSprite(320,50); //Background Sprite
           if (!background.created()) {    
-            Serial.println("###### POOL SPRITE ERROR ######");
-          // Serial.printf("Pool data W:%d H:%s D:%s\n", pData.workersCount, pData.workersHash, pData.bestDifficulty);
+            DEBUG_SERIAL_PRINTLN("###### POOL SPRITE ERROR ######");
+          // DEBUG_SERIAL_PRINTF("Pool data W:%d H:%s D:%s\n", pData.workersCount, pData.workersHash, pData.bestDifficulty);
             printheap();        
           }       
           background.setSwapBytes(true);
@@ -196,8 +197,8 @@ void printPoolData(){
         background.createSprite(320,40); //Background Sprite
         background.fillSprite(TFT_DARKGREEN);
           if (!background.created()) {    
-            Serial.println("###### POOL SPRITE ERROR ######");
-          // Serial.printf("Pool data W:%d H:%s D:%s\n", pData.workersCount, pData.workersHash, pData.bestDifficulty);
+            DEBUG_SERIAL_PRINTLN("###### POOL SPRITE ERROR ######");
+          // DEBUG_SERIAL_PRINTF("Pool data W:%d H:%s D:%s\n", pData.workersCount, pData.workersHash, pData.bestDifficulty);
             printheap();        
           }
         background.setFreeFont(FF24);
@@ -207,7 +208,7 @@ void printPoolData(){
         background.drawString("TESTNET", 50, 0, GFXFF);
         background.pushSprite(0,185);  
         mPoolUpdate = millis();
-        Serial.println("Testnet");
+        DEBUG_SERIAL_PRINTLN("Testnet");
         background.deleteSprite();
       }
   }
@@ -271,7 +272,7 @@ void esp32_2432S028R_MinerScreen(unsigned long mElapsed)
   background.deleteSprite();   
   // printheap();
 
-   //Serial.println("=========== Mining Display ==============") ;
+   //DEBUG_SERIAL_PRINTLN("=========== Mining Display ==============") ;
   // Create background sprite to print data at once
   createBackgroundSprite(WIDTH-7, HEIGHT-100); // initHeight); //Background Sprite
   //Print background screen    
@@ -289,7 +290,7 @@ void esp32_2432S028R_MinerScreen(unsigned long mElapsed)
   // Delete sprite to free the memory heap
   background.deleteSprite();  
 
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str()); 
    
   #ifdef DEBUG_MEMORY
@@ -351,7 +352,7 @@ void esp32_2432S028R_ClockScreen(unsigned long mElapsed)
   // Delete sprite to free the memory heap
   background.deleteSprite();   
 
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   #ifdef DEBUG_MEMORY
@@ -443,7 +444,7 @@ void esp32_2432S028R_GlobalHashScreen(unsigned long mElapsed)
   // Delete sprite to free the memory heap
   background.deleteSprite();   
 
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   #ifdef DEBUG_MEMORY
@@ -503,7 +504,7 @@ void esp32_2432S028R_BTCprice(unsigned long mElapsed)
   // Delete sprite to free the memory heap
   background.deleteSprite();   
 
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   #ifdef DEBUG_MEMORY
@@ -559,13 +560,13 @@ void esp32_2432S028R_DoLedStuff(unsigned long frame)
           else
             if (t_x > 160) {
               // next screen
-             // Serial.printf("Next screen touch( x:%d y:%d )\n", t_x, t_y);
+             // DEBUG_SERIAL_PRINTF("Next screen touch( x:%d y:%d )\n", t_x, t_y);
               currentDisplayDriver->current_cyclic_screen = (currentDisplayDriver->current_cyclic_screen + 1) % currentDisplayDriver->num_cyclic_screens;
             } else if (t_x < 160)
             {
               // Previus screen
-             // Serial.printf("Previus screen touch( x:%d y:%d )\n", t_x, t_y);
-              /* Serial.println(currentDisplayDriver->current_cyclic_screen); */
+             // DEBUG_SERIAL_PRINTF("Previus screen touch( x:%d y:%d )\n", t_x, t_y);
+              /* DEBUG_SERIAL_PRINTLN(currentDisplayDriver->current_cyclic_screen); */
               currentDisplayDriver->current_cyclic_screen = currentDisplayDriver->current_cyclic_screen - 1;
               if (currentDisplayDriver->current_cyclic_screen<0) currentDisplayDriver->current_cyclic_screen = currentDisplayDriver->num_cyclic_screens - 1;
             }
@@ -587,7 +588,7 @@ void esp32_2432S028R_DoLedStuff(unsigned long frame)
     if (currentMillis - previousMillis >= 500)
     { // 0.5sec blink
       previousMillis = currentMillis;
-      // Serial.print("C");
+      // DEBUG_SERIAL_PRINT("C");
       digitalWrite(LED_PIN, HIGH);
       digitalWrite(LED_PIN_B, !digitalRead(LED_PIN)); // Cambia el estado del LED
     }
@@ -596,7 +597,7 @@ void esp32_2432S028R_DoLedStuff(unsigned long frame)
   case NM_hashing:
     if (currentMillis - previousMillis >= 500)
     { // 0.1sec blink
-      // Serial.print("h");
+      // DEBUG_SERIAL_PRINT("h");
       previousMillis = currentMillis;
       digitalWrite(LED_PIN_B, HIGH);
       digitalWrite(LED_PIN, !digitalRead(LED_PIN)); // Cambia el estado del LED      

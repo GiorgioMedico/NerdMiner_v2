@@ -1,5 +1,6 @@
 
 #include "drivers/devices/device.h"
+#include "logging.h"
 #ifdef TOUCH_ENABLE
 #include "TouchHandler.h"
 
@@ -54,9 +55,9 @@ uint16_t TouchHandler::isTouched() {
 
     if (code) {
       if (code == 1)
-        Serial.print("Touch bottom\n");
+        DEBUG_SERIAL_PRINT("Touch bottom\n");
       else
-        Serial.print("Touch top\n");
+        DEBUG_SERIAL_PRINT("Touch top\n");
     }
   }
   return code;

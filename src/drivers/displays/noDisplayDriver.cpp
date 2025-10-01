@@ -1,4 +1,5 @@
 #include "displayDriver.h"
+#include "logging.h"
 
 #ifdef NO_DISPLAY
 
@@ -11,13 +12,13 @@ bool ledOn = true;
 
 void noDisplay_Init(void)
 {
-  Serial.println("No display driver initialized");
+  DEBUG_SERIAL_PRINTLN("No display driver initialized");
   pinMode(LED_PIN, OUTPUT);
 }
 
 void noDisplay_AlternateScreenState(void)
 {
-  Serial.println("Switching display state");
+  DEBUG_SERIAL_PRINTLN("Switching display state");
   ledOn = !ledOn;
 }
 
@@ -30,26 +31,26 @@ void noDisplay_NoScreen(unsigned long mElapsed)
   mining_data data = getMiningData(mElapsed);
 
   // Print hashrate to serial
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   // Print extended data to serial for no display devices
-  Serial.printf(">>> Valid blocks: %s\n", data.valids.c_str());
-  Serial.printf(">>> Block templates: %s\n", data.templates.c_str());
-  Serial.printf(">>> Best difficulty: %s\n", data.bestDiff.c_str());
-  Serial.printf(">>> 32Bit shares: %s\n", data.completedShares.c_str());
-  Serial.printf(">>> Temperature: %s\n", data.temp.c_str());
-  Serial.printf(">>> Total MHashes: %s\n", data.totalMHashes.c_str());
-  Serial.printf(">>> Time mining: %s\n", data.timeMining.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Valid blocks: %s\n", data.valids.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Block templates: %s\n", data.templates.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Best difficulty: %s\n", data.bestDiff.c_str());
+  DEBUG_SERIAL_PRINTF(">>> 32Bit shares: %s\n", data.completedShares.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Temperature: %s\n", data.temp.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Total MHashes: %s\n", data.totalMHashes.c_str());
+  DEBUG_SERIAL_PRINTF(">>> Time mining: %s\n", data.timeMining.c_str());
 }
 void noDisplay_LoadingScreen(void)
 {
-  Serial.println("Initializing...");
+  DEBUG_SERIAL_PRINTLN("Initializing...");
 }
 
 void noDisplay_SetupScreen(void)
 {
-  Serial.println("Setup...");
+  DEBUG_SERIAL_PRINTLN("Setup...");
 }
 
 // Variables para controlar el parpadeo con millis()

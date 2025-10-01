@@ -1,4 +1,5 @@
 #include "displayDriver.h"
+#include "logging.h"
 
 #ifdef M5STACK_DISPLAY
 
@@ -16,7 +17,7 @@ extern TSettings Settings;
 
 void m5stackDisplay_Init(void)
 {
-  Serial.println("M5stack display driver initialized");
+  DEBUG_SERIAL_PRINTLN("M5stack display driver initialized");
   M5.begin(); //Init M5Stack
   M5.Power.begin(); //Init power
   M5.Lcd.setTextColor(WHITE);
@@ -53,9 +54,9 @@ void m5stackDisplay_NoScreen(unsigned long mElapsed)
   mining_data data = getMiningData(mElapsed);
 
   // Print hashrate to serial
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
-  //Serial.printf(">>> Temperature: %s\n", data.temp.c_str());
+  //DEBUG_SERIAL_PRINTF(">>> Temperature: %s\n", data.temp.c_str());
 
   M5.Lcd.setTextColor(WHITE);
   M5.Lcd.setFreeFont(FMB9);
@@ -83,12 +84,12 @@ void m5stackDisplay_NoScreen(unsigned long mElapsed)
 }
 void m5stackDisplay_LoadingScreen(void)
 {
-  Serial.println("Initializing...");
+  DEBUG_SERIAL_PRINTLN("Initializing...");
 }
 
 void m5stackDisplay_SetupScreen(void)
 {
-  Serial.println("Setup...");
+  DEBUG_SERIAL_PRINTLN("Setup...");
 }
 
 void m5stackDisplay_DoLedStuff(unsigned long frame)

@@ -6,6 +6,7 @@
 #include "nvMemory.h"
 #include "../devices/device.h"
 #include  "SDCard.h"
+#include "logging.h"
 
 #if defined (BUILD_SDMMC_1) || defined(BUILD_SDMMC_4)
 #include <SD_MMC.h>
@@ -49,7 +50,7 @@ SDCard::~SDCard()
         delete ispi_;
     }
 #endif // BUILD_SDSPI
-    Serial.println("SDCard: Unmounted");  
+    DEBUG_SERIAL_PRINTLN("SDCard: Unmounted");  
 }
 
 /// @brief Check if the card is accessed right now.
@@ -77,7 +78,7 @@ void SDCard::SD2nvMemory(nvMemory* nvMem, TSettings* Settings)
     {
         nvMem->saveConfig(Settings);
         WiFi.begin(Settings->WifiSSID, Settings->WifiPW);
-        Serial.println("SDCard: Settings transfered to internal memory. Restarting now.");
+        DEBUG_SERIAL_PRINTLN("SDCard: Settings transfered to internal memory. Restarting now.");
         ESP.restart();
     }
 }
@@ -103,11 +104,11 @@ bool SDCard::loadConfigFile(TSettings* Settings)
                 DeserializationError error = deserializeJson(json, configFile);
                 configFile.close();
                 cardBusy_ = false;
-                Serial.println("SDCard: Loading config file");
+                DEBUG_SERIAL_PRINTLN("SDCard: Loading config file");
                 if (!error)
                 {
                     serializeJsonPretty(json, Serial);
-                    Serial.print('\n');    
+                    DEBUG_SERIAL_PRINT('\n');    
                     if (json.containsKey(JSON_KEY_SSID)) {                
                         Settings->WifiSSID = json[JSON_KEY_SSID] | Settings->WifiSSID;
                     }
@@ -133,24 +134,24 @@ bool SDCard::loadConfigFile(TSettings* Settings)
                     } else {
                         Settings->Brightness = 250;
                     }
-                    // Serial.printf("Carteira Lida SD:%s\n", Settings.BtcWallet);       
-                    Serial.printf("Carteira Lida SDs:%s\n", Settings->BtcWallet);                       
+                    // DEBUG_SERIAL_PRINTF("Carteira Lida SD:%s\n", Settings.BtcWallet);       
+                    DEBUG_SERIAL_PRINTF("Carteira Lida SDs:%s\n", Settings->BtcWallet);                       
                     return true;
                 }
                 else
                 {
                     // Error loading JSON data
-                    Serial.println("SDCard: Error parsing config file!");
+                    DEBUG_SERIAL_PRINTLN("SDCard: Error parsing config file!");
                 }
             }
             else
             {
-                Serial.println("SDCard: Error opening config file!");
+                DEBUG_SERIAL_PRINTLN("SDCard: Error opening config file!");
             }
         }
         else
         {
-            Serial.println("SDCard: No config file available!");
+            DEBUG_SERIAL_PRINTLN("SDCard: No config file available!");
         }
     }
     return false;
@@ -164,17 +165,17 @@ bool SDCard::cardAvailable()
     {
         if (iSD_->cardType() != CARD_NONE)
         {
-            Serial.println("SDCard: Inserted.");
+            DEBUG_SERIAL_PRINTLN("SDCard: Inserted.");
             return true;
         }
         else
         {
-            Serial.println("SDCard: Not inserted.");
+            DEBUG_SERIAL_PRINTLN("SDCard: Not inserted.");
         }
     }
     else
     {
-        Serial.println("SDCard: Interface not initialized.");
+        DEBUG_SERIAL_PRINTLN("SDCard: Interface not initialized.");
     }
     return false;
 }
@@ -185,11 +186,11 @@ bool SDCard::initSDcard()
 {
     if (!cardAvailable()) 
     {
-        Serial.println("SDCard: init SD card interface.");
+        DEBUG_SERIAL_PRINTLN("SDCard: init SD card interface.");
 #if defined (BUILD_SDMMC_4)
         iSD_->setPins(SDMMC_CLK, SDMMC_CMD, SDMMC_D0, SDMMC_D1, SDMMC_D2, SDMMC_D3);
         cardInitialized_ = iSD_->begin("/sd", false);
-        Serial.println("SDCard: 4-Bit Mode.");
+        DEBUG_SERIAL_PRINTLN("SDCard: 4-Bit Mode.");
     }
 #elif defined (BUILD_SDMMC_1)
 #warning SDMMC : 1 - bit mode is not always working. If you experience issues, try other modes.
@@ -200,15 +201,15 @@ bool SDCard::initSDcard()
 #else
         cardInitialized_ = iSD_->begin("/sd", true);
 #endif
-        Serial.println("SDCard: 1-Bit Mode.");
+        DEBUG_SERIAL_PRINTLN("SDCard: 1-Bit Mode.");
     }
 #elif defined (BUILD_SDSPI)
         ispi_->begin(SDSPI_CLK, SDSPI_MISO, SDSPI_MOSI, SDSPI_CS);
         cardInitialized_ = iSD_->begin(SDSPI_CS, *ispi_);
-        Serial.println("SDCard: SPI mode.");
+        DEBUG_SERIAL_PRINTLN("SDCard: SPI mode.");
     }
 #else
-    Serial.println("SDCard: interface not defined.");
+    DEBUG_SERIAL_PRINTLN("SDCard: interface not defined.");
     return false;
 #endif // dataPinsDefined
     cardAvailable();

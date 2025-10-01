@@ -1,4 +1,5 @@
 #include "displayDriver.h"
+#include "logging.h"
 
 #ifdef DONGLE_DISPLAY
 
@@ -97,7 +98,7 @@ void dongleDisplay_Init(void)
   // if (render.loadFont(NotoSans_Bold, sizeof(NotoSans_Bold))) {
   if (render.loadFont(DigitalNumbers, sizeof(DigitalNumbers)))
   {
-    Serial.println("Initialise error");
+    DEBUG_SERIAL_PRINTLN("Initialise error");
     return;
   }
 }
@@ -105,7 +106,7 @@ void dongleDisplay_Init(void)
 void dongleDisplay_AlternateScreenState(void)
 {
   int screen_state = digitalRead(TFT_BL);
-  Serial.println("Switching display state");
+  DEBUG_SERIAL_PRINTLN("Switching display state");
   digitalWrite(TFT_BL, !screen_state);
 }
 
@@ -124,7 +125,7 @@ void dongleDisplay_MinerScreen(unsigned long mElapsed)
   mining_data data = getMiningData(mElapsed);
 
   // Print background screen
-  Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
+  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
                 data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   background.pushImage(0, 0, MinerWidth, MinerHeight, MinerScreen);
