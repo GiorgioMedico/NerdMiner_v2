@@ -67,6 +67,8 @@ void amoledDisplay_AlternateRotation(void)
 
 void amoledDisplay_MinerScreen(unsigned long mElapsed)
 {
+  if (screen_state == 0) return;
+
   mining_data data = getMiningData(mElapsed);
 
   // Print background screen
@@ -116,6 +118,8 @@ void amoledDisplay_MinerScreen(unsigned long mElapsed)
 
 void amoledDisplay_ClockScreen(unsigned long mElapsed)
 {
+  if (screen_state == 0) return;
+
   clock_data data = getClockData(mElapsed);
 
   // Print background screen
@@ -153,6 +157,8 @@ void amoledDisplay_ClockScreen(unsigned long mElapsed)
 
 void amoledDisplay_GlobalHashScreen(unsigned long mElapsed)
 {
+  if (screen_state == 0) return;
+
   coin_data data = getCoinData(mElapsed);
 
   // Print background screen
@@ -235,7 +241,9 @@ void amoledDisplay_DoLedStuff(unsigned long frame)
 {
 }
 
-CyclicScreenFunction amoledDisplayCyclicScreens[] = {amoledDisplay_MinerScreen, amoledDisplay_ClockScreen, amoledDisplay_GlobalHashScreen};
+// Only Mining Screen enabled - other screens commented out to eliminate HTTP API overhead
+CyclicScreenFunction amoledDisplayCyclicScreens[] = {amoledDisplay_MinerScreen};
+// Disabled: amoledDisplay_ClockScreen, amoledDisplay_GlobalHashScreen
 
 DisplayDriver amoledDisplayDriver = {
     amoledDisplay_Init,

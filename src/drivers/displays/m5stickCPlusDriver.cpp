@@ -64,6 +64,8 @@ void m5stickCPlusDriver_AlternateRotation(void)
 
 void m5stickCPlusDriver_MinerScreen(unsigned long mElapsed)
 {
+  if (screen_state == 0) return;
+
   mining_data data = getMiningData(mElapsed);
 
   // Print background screen
@@ -112,6 +114,8 @@ void m5stickCPlusDriver_MinerScreen(unsigned long mElapsed)
 
 void m5stickCPlusDriver_ClockScreen(unsigned long mElapsed)
 {
+  if (screen_state == 0) return;
+
   clock_data data = getClockData(mElapsed);
 
   // Print background screen
@@ -150,6 +154,8 @@ void m5stickCPlusDriver_ClockScreen(unsigned long mElapsed)
 
 void m5stickCPlusDriver_GlobalHashScreen(unsigned long mElapsed)
 {
+  if (screen_state == 0) return;
+
   coin_data data = getCoinData(mElapsed);
 
   // Print background screen
@@ -202,8 +208,10 @@ void m5stickCPlusDriver_GlobalHashScreen(unsigned long mElapsed)
 
 void tDisplay_BTCprice(unsigned long mElapsed)
 {
+  if (screen_state == 0) return;
+
   clock_data data = getClockData(mElapsed);
-  
+
   // Print background screen
   background.pushImage(0, 0, priceScreenWidth, priceScreenHeight, priceScreen);
 
@@ -261,7 +269,9 @@ void m5stickCPlusDriver_DoLedStuff(unsigned long frame)
 {
 }
 
-CyclicScreenFunction m5stickCPlusDriverCyclicScreens[] = { m5stickCPlusDriver_MinerScreen, m5stickCPlusDriver_ClockScreen, m5stickCPlusDriver_GlobalHashScreen, tDisplay_BTCprice};
+// Only Mining Screen enabled - other screens commented out to eliminate HTTP API overhead
+CyclicScreenFunction m5stickCPlusDriverCyclicScreens[] = {m5stickCPlusDriver_MinerScreen};
+// Disabled: m5stickCPlusDriver_ClockScreen, m5stickCPlusDriver_GlobalHashScreen, tDisplay_BTCprice
 
 DisplayDriver m5stickCPlusDriver = {
     m5stickCPlusDriver_Init,

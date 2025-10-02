@@ -805,7 +805,7 @@ void minerWorkerSw(void * task_id)
         }
       }
     } else
-      vTaskDelay(2 / portTICK_PERIOD_MS);
+      vTaskDelay(10 / portTICK_PERIOD_MS);
 
     wdt_counter++;
     if (wdt_counter >= 8)
@@ -1070,7 +1070,7 @@ void minerWorkerHw(void * task_id)
       }
       esp_sha_release_hardware();
     } else
-      vTaskDelay(2 / portTICK_PERIOD_MS);
+      vTaskDelay(10 / portTICK_PERIOD_MS);
 
     wdt_counter++;
     if (wdt_counter >= 8)
@@ -1318,7 +1318,7 @@ void minerWorkerHw(void * task_id)
       }
       esp_sha_unlock_engine(SHA2_256);
     } else
-      vTaskDelay(2 / portTICK_PERIOD_MS);
+      vTaskDelay(10 / portTICK_PERIOD_MS);
 
     esp_task_wdt_reset();
   }
@@ -1329,7 +1329,7 @@ void minerWorkerHw(void * task_id)
 #endif  //HARDWARE_SHA265
 
 
-#define DELAY 100
+#define DELAY 1000  // Reduced from 500ms to 1000ms (2Hz -> 1Hz) to save CPU cycles
 #define REDRAW_EVERY 10
 
 void restoreStat() {
@@ -1495,6 +1495,8 @@ void runMonitor(void *name)
         upTime ++;
       }
 
+      // Serial.printf("[HASHRATE] %.2f KH/s\n", (float)elapsedKHs * 1000.0 / mElapsed);
+
       drawCurrentScreen(mElapsed);
 
       // Monitor state when hashrate is 0.0
@@ -1518,9 +1520,11 @@ void runMonitor(void *name)
         seconds_elapsed = 0;
         if(currentIntervalIndex < saveIntervalsSize - 1)
           currentIntervalIndex++;
-      }    
+      }
     }
-    animateCurrentScreen(frame);
+    // animateCurrentScreen has empty implementations in all current drivers
+    // animateCurrentScreen(frame);
+    // doLedStuff needed for ESP32-2432S028R backlight/touch control
     doLedStuff(frame);
 
     vTaskDelay(DELAY / portTICK_PERIOD_MS);

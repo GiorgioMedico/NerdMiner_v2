@@ -160,6 +160,8 @@ void printMemPoolFees(unsigned long mElapsed)
 
 void t_hmiDisplay_MinerScreen(unsigned long mElapsed)
 {
+  if (digitalRead(TFT_BL)) return;
+
   mining_data data = getMiningData(mElapsed);
   background.pushImage(0, 0, MinerWidth, 170, MinerScreen);
   DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
@@ -211,6 +213,8 @@ void t_hmiDisplay_MinerScreen(unsigned long mElapsed)
 
 void t_hmiDisplay_ClockScreen(unsigned long mElapsed)
 {
+  if (digitalRead(TFT_BL)) return;
+
   clock_data data = getClockData(mElapsed);
 
   // Print background screen
@@ -252,6 +256,8 @@ void t_hmiDisplay_ClockScreen(unsigned long mElapsed)
 
 void t_hmiDisplay_GlobalHashScreen(unsigned long mElapsed)
 {
+  if (digitalRead(TFT_BL)) return;
+
   coin_data data = getCoinData(mElapsed);
 
   // Print background screen
@@ -317,6 +323,8 @@ void t_hmiDisplay_GlobalHashScreen(unsigned long mElapsed)
 
 void t_hmiDisplay_BTCprice(unsigned long mElapsed)
 {
+  if (digitalRead(TFT_BL)) return;
+
   clock_data data = getClockData(mElapsed);
 
   // Print background screen
@@ -391,7 +399,9 @@ void t_hmiDisplay_DoLedStuff(unsigned long frame)
 {
 }
 
-CyclicScreenFunction t_hmiDisplayCyclicScreens[] = {t_hmiDisplay_MinerScreen, t_hmiDisplay_ClockScreen, t_hmiDisplay_GlobalHashScreen, t_hmiDisplay_BTCprice};
+// Only Mining Screen enabled - other screens commented out to eliminate HTTP API overhead
+CyclicScreenFunction t_hmiDisplayCyclicScreens[] = {t_hmiDisplay_MinerScreen};
+// Disabled: t_hmiDisplay_ClockScreen, t_hmiDisplay_GlobalHashScreen, t_hmiDisplay_BTCprice
 
 DisplayDriver t_hmiDisplayDriver = {
     t_hmiDisplay_Init,

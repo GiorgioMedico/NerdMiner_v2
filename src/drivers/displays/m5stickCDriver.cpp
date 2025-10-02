@@ -49,6 +49,7 @@ void m5stickCDriver_AlternateRotation(void)
 
 void m5stickCDriver_MinerScreen(unsigned long mElapsed)
 {
+  if (screen_state == 0) return;
 
   mining_data data = getMiningData(mElapsed);
 
@@ -76,6 +77,8 @@ void m5stickCDriver_MinerScreen(unsigned long mElapsed)
 
 void m5stickCDriver_ClockScreen(unsigned long mElapsed)
 {
+  if (screen_state == 0) return;
+
   mining_data data = getMiningData(mElapsed);
   clock_data_t curr_clock_data = getClockData_t(mElapsed);
 
@@ -117,6 +120,8 @@ void m5stickCDriver_ClockScreen(unsigned long mElapsed)
 
 void m5stickCDriver_GlobalHashScreen(unsigned long mElapsed)
 {
+  if (screen_state == 0) return;
+
   coin_data data = getCoinData(mElapsed);
 
   DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
@@ -184,7 +189,9 @@ void m5stickCDriver_DoLedStuff(unsigned long frame)
 {
 }
 
-CyclicScreenFunction m5stickCDriverCyclicScreens[] = { m5stickCDriver_MinerScreen,m5stickCDriver_ClockScreen,m5stickCDriver_GlobalHashScreen};
+// Only Mining Screen enabled - other screens commented out to eliminate HTTP API overhead
+CyclicScreenFunction m5stickCDriverCyclicScreens[] = {m5stickCDriver_MinerScreen};
+// Disabled: m5stickCDriver_ClockScreen, m5stickCDriver_GlobalHashScreen
 
 DisplayDriver m5stickCDriver = {
     m5stickCDriver_Init,

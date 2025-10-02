@@ -62,6 +62,8 @@ void tDisplay_AlternateRotation(void)
 
 void tDisplay_MinerScreen(unsigned long mElapsed)
 {
+  if (digitalRead(TFT_BL)) return;
+
   mining_data data = getMiningData(mElapsed);
 
   // Print background screen
@@ -112,6 +114,8 @@ void tDisplay_MinerScreen(unsigned long mElapsed)
 
 void tDisplay_ClockScreen(unsigned long mElapsed)
 {
+  if (digitalRead(TFT_BL)) return;
+
   clock_data data = getClockData(mElapsed);
 
   // Print background screen
@@ -150,6 +154,8 @@ void tDisplay_ClockScreen(unsigned long mElapsed)
 
 void tDisplay_GlobalHashScreen(unsigned long mElapsed)
 {
+  if (digitalRead(TFT_BL)) return;
+
   coin_data data = getCoinData(mElapsed);
 
   // Print background screen
@@ -210,6 +216,8 @@ void tDisplay_GlobalHashScreen(unsigned long mElapsed)
 
 void tDisplay_BTCprice(unsigned long mElapsed)
 {
+  if (digitalRead(TFT_BL)) return;
+
   clock_data data = getClockData(mElapsed);
   data.currentDate ="01/12/2023";
   
@@ -271,7 +279,9 @@ void tDisplay_DoLedStuff(unsigned long frame)
 {
 }
 
-CyclicScreenFunction tDisplayCyclicScreens[] = {tDisplay_MinerScreen, tDisplay_ClockScreen, tDisplay_GlobalHashScreen, tDisplay_BTCprice};
+// Only Mining Screen enabled - other screens commented out to eliminate HTTP API overhead
+CyclicScreenFunction tDisplayCyclicScreens[] = {tDisplay_MinerScreen};
+// Disabled: tDisplay_ClockScreen, tDisplay_GlobalHashScreen, tDisplay_BTCprice
 
 DisplayDriver tDisplayDriver = {
     tDisplay_Init,

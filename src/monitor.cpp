@@ -32,7 +32,7 @@ extern TSettings Settings;
 bool invertColors = false;
 
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 3600, 60000);
+NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 3600, 3600000);  // 1 hour update interval
 unsigned int bitcoin_price=0;
 String current_block = "793261";
 global_data gData;
@@ -245,14 +245,13 @@ String getDate(){
 }
 
 String getTime(void){
+  static char LocalHour[10];  // Static buffer to avoid heap allocation
   unsigned long currentHours, currentMinutes, currentSeconds;
   getTime(&currentHours, &currentMinutes, &currentSeconds);
 
-  char LocalHour[10];
   sprintf(LocalHour, "%02d:%02d", currentHours, currentMinutes);
-  
-  String mystring(LocalHour);
-  return LocalHour;
+
+  return String(LocalHour);
 }
 
 enum EHashRateScale
@@ -269,6 +268,8 @@ static double s_top_hashrate = 0.0;
 static std::list<double> s_hashrate_avg_list;
 static double s_hashrate_summ = 0.0;
 static uint8_t s_hashrate_recalc = 0;
+static char s_hashrate_buffer[16] = {0};  // Cache for hashrate string
+static double s_last_avg_hashrate = -1.0;  // Track last value to avoid recalculation
 
 String getCurrentHashRate(unsigned long mElapsed)
 {
@@ -276,7 +277,7 @@ String getCurrentHashRate(unsigned long mElapsed)
 
   s_hashrate_summ += hashrate;
   s_hashrate_avg_list.push_back(hashrate);
-  if (s_hashrate_avg_list.size() > 10)
+  if (s_hashrate_avg_list.size() > 5)
   {
     s_hashrate_summ -= s_hashrate_avg_list.front();
     s_hashrate_avg_list.pop_front();
@@ -309,25 +310,37 @@ String getCurrentHashRate(unsigned long mElapsed)
     }
   }
 
-  switch (s_hashrate_scale)
+  // Only update string if hashrate changed significantly (> 0.5 difference)
+  if (abs(avg_hashrate - s_last_avg_hashrate) > 0.5)
   {
-    case HashRateScale_99KH:
-      return String(avg_hashrate, 2);
-    case HashRateScale_999KH:
-      return String(avg_hashrate, 1);
-    default:
-      return String((int)avg_hashrate );
+    s_last_avg_hashrate = avg_hashrate;
+    switch (s_hashrate_scale)
+    {
+      case HashRateScale_99KH:
+        snprintf(s_hashrate_buffer, sizeof(s_hashrate_buffer), "%.2f", avg_hashrate);
+        break;
+      case HashRateScale_999KH:
+        snprintf(s_hashrate_buffer, sizeof(s_hashrate_buffer), "%.1f", avg_hashrate);
+        break;
+      default:
+        snprintf(s_hashrate_buffer, sizeof(s_hashrate_buffer), "%d", (int)avg_hashrate);
+        break;
+    }
   }
+
+  return String(s_hashrate_buffer);
 }
 
 mining_data getMiningData(unsigned long mElapsed)
 {
   mining_data data;
 
-  char best_diff_string[16] = {0};
-  suffix_string(best_diff, best_diff_string, 16, 0);
+  // bestDiff - use temp buffer for suffix_string
+  char bestDiffBuf[16];
+  suffix_string(best_diff, bestDiffBuf, sizeof(bestDiffBuf), 0);
+  data.bestDiff = bestDiffBuf;
 
-  char timeMining[15] = {0};
+  // timeMining - format uptime
   uint64_t tm = upTime;
   int secs = tm % 60;
   tm /= 60;
@@ -335,17 +348,28 @@ mining_data getMiningData(unsigned long mElapsed)
   tm /= 60;
   int hours = tm % 24;
   int days = tm / 24;
-  sprintf(timeMining, "%01d  %02d:%02d:%02d", days, hours, mins, secs);
+  char timeBuf[20];
+  snprintf(timeBuf, sizeof(timeBuf), "%01d  %02d:%02d:%02d", days, hours, mins, secs);
+  data.timeMining = timeBuf;
 
+  // Cache temperature reading - update only every 5 seconds
+  static unsigned long lastTempUpdate = 0;
+  static char cachedTemp[8] = "0";
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastTempUpdate >= 5000 || lastTempUpdate == 0)
+  {
+    snprintf(cachedTemp, sizeof(cachedTemp), "%.0f", temperatureRead());
+    lastTempUpdate = currentMillis;
+  }
+
+  // Direct String assignments - numeric values auto-convert
   data.completedShares = shares.load(std::memory_order_relaxed);
   data.totalMHashes = Mhashes;
   data.totalKHashes = totalKHashes;
   data.currentHashRate = getCurrentHashRate(mElapsed);
   data.templates = templates;
-  data.bestDiff = best_diff_string;
-  data.timeMining = timeMining;
   data.valids = valids.load(std::memory_order_relaxed);
-  data.temp = String(temperatureRead(), 0);
+  data.temp = cachedTemp;
   data.currentTime = getTime();
 
   return data;

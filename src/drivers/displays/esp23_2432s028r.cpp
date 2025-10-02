@@ -218,6 +218,8 @@ void printPoolData(){
 
 void esp32_2432S028R_MinerScreen(unsigned long mElapsed)
 {
+  if (ledcRead(0) == 0) return;
+
   mining_data data = getMiningData(mElapsed);
 
   printPoolData();
@@ -301,6 +303,7 @@ void esp32_2432S028R_MinerScreen(unsigned long mElapsed)
 
 void esp32_2432S028R_ClockScreen(unsigned long mElapsed)
 {
+  if (ledcRead(0) == 0) return;
 
   if (hasChangedScreen) tft.pushImage(0, 0, minerClockWidth, minerClockHeight, minerClockScreen);
   
@@ -363,6 +366,8 @@ void esp32_2432S028R_ClockScreen(unsigned long mElapsed)
 
 void esp32_2432S028R_GlobalHashScreen(unsigned long mElapsed)
 {
+  if (ledcRead(0) == 0) return;
+
   if (hasChangedScreen) tft.pushImage(0, 0, globalHashWidth, globalHashHeight, globalHashScreen);
   
   printPoolData();
@@ -454,7 +459,8 @@ void esp32_2432S028R_GlobalHashScreen(unsigned long mElapsed)
 }
 void esp32_2432S028R_BTCprice(unsigned long mElapsed)
 {
-  
+  if (ledcRead(0) == 0) return;
+
   if (hasChangedScreen) tft.pushImage(0, 0, priceScreenWidth, priceScreenHeight, priceScreen);
   printPoolData();
   hasChangedScreen = false;
@@ -608,7 +614,9 @@ void esp32_2432S028R_DoLedStuff(unsigned long frame)
 
 }
 
-CyclicScreenFunction esp32_2432S028RCyclicScreens[] = {esp32_2432S028R_MinerScreen, esp32_2432S028R_ClockScreen, esp32_2432S028R_GlobalHashScreen, esp32_2432S028R_BTCprice};
+// Only Mining Screen enabled - other screens commented out to eliminate HTTP API overhead
+CyclicScreenFunction esp32_2432S028RCyclicScreens[] = {esp32_2432S028R_MinerScreen};
+// Disabled: esp32_2432S028R_ClockScreen, esp32_2432S028R_GlobalHashScreen, esp32_2432S028R_BTCprice
 
 DisplayDriver esp32_2432S028RDriver = {
     esp32_2432S028R_Init,
