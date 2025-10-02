@@ -50,12 +50,12 @@
 
 nvs_handle_t stat_handle;
 
-uint32_t templates = 0;
-uint32_t hashes = 0;
-uint32_t Mhashes = 0;
-uint32_t totalKHashes = 0;
-uint32_t elapsedKHs = 0;
-uint64_t upTime = 0;
+std::atomic<uint32_t> templates{0};
+std::atomic<uint32_t> hashes{0};
+std::atomic<uint32_t> Mhashes{0};
+std::atomic<uint32_t> totalKHashes{0};
+std::atomic<uint32_t> elapsedKHs{0};
+std::atomic<uint64_t> upTime{0};
 
 std::atomic<uint32_t> shares{0}; // increase if blockhash has 32 bits of zeroes
 std::atomic<uint32_t> valids{0}; // increased if blockhash <= target
@@ -75,11 +75,12 @@ IPAddress serverIP(1, 1, 1, 1); //Temporally save poolIPaddres
 
 //Global work data 
 static WiFiClient client;
+static std::atomic<bool> s_client_connected{false};  // Thread-safe proxy for client.connected()
 static miner_data mMiner; //Global miner data (Create a miner class TODO)
 mining_subscribe mWorker;
 mining_job mJob;
 monitor_data mMonitor;
-static bool volatile isMinerSuscribed = false;
+static std::atomic<bool> isMinerSuscribed{false};
 unsigned long mLastTXtoPool = millis();
 
 int saveIntervals[7] = {5 * 60, 15 * 60, 30 * 60, 1 * 3600, 3 * 3600, 6 * 3600, 12 * 3600};
@@ -87,12 +88,15 @@ int saveIntervalsSize = sizeof(saveIntervals)/sizeof(saveIntervals[0]);
 int currentIntervalIndex = 0;
 
 bool checkPoolConnection(void) {
-  
-  if (client.connected()) {
+
+  bool connected = client.connected();
+  s_client_connected.store(connected, std::memory_order_release);
+
+  if (connected) {
     return true;
   }
-  
-  isMinerSuscribed = false;
+
+  isMinerSuscribed.store(false, std::memory_order_release);
 
   DEBUG_SERIAL_PRINTLN("Client not connected, trying to connect..."); 
   
@@ -107,9 +111,11 @@ bool checkPoolConnection(void) {
     DEBUG_SERIAL_PRINTLN("Imposible to connect to : " + Settings.PoolAddress);
     WiFi.hostByName(Settings.PoolAddress.c_str(), serverIP);
     DEBUG_SERIAL_PRINTF("Resolved DNS got: %s\n", serverIP.toString());
+    s_client_connected.store(false, std::memory_order_release);
     return false;
   }
 
+  s_client_connected.store(true, std::memory_order_release);
   return true;
 }
 
@@ -119,13 +125,14 @@ bool checkPoolConnection(void) {
 unsigned long mStart0Hashrate = 0;
 bool checkPoolInactivity(unsigned int keepAliveTime, unsigned long inactivityTime){
 
-    unsigned long currentKHashes = (Mhashes*1000) + hashes/1000;
+    unsigned long currentKHashes = (Mhashes.load(std::memory_order_relaxed)*1000) + hashes.load(std::memory_order_relaxed)/1000;
 
     // Handle hash counter wraparound (similar to timestamp wraparound)
-    if (currentKHashes < totalKHashes) {
-      totalKHashes = currentKHashes;
+    uint32_t totalKH = totalKHashes.load(std::memory_order_relaxed);
+    if (currentKHashes < totalKH) {
+      totalKHashes.store(currentKHashes, std::memory_order_relaxed);
     }
-    unsigned long elapsedKHs = currentKHashes - totalKHashes;
+    unsigned long elapsedKHs_local = currentKHashes - totalKH;
 
     uint32_t time_now = millis();
 
@@ -145,9 +152,9 @@ bool checkPoolInactivity(unsigned int keepAliveTime, unsigned long inactivityTim
       }*/
     }
 
-    if(elapsedKHs == 0){
+    if(elapsedKHs_local == 0){
       //Check if hashrate is 0 during inactivityTIme
-      if(mStart0Hashrate == 0) mStart0Hashrate  = time_now; 
+      if(mStart0Hashrate == 0) mStart0Hashrate  = time_now;
       if((time_now-mStart0Hashrate) > inactivityTime) { mStart0Hashrate=0; return true;}
       return false;
     }
@@ -284,7 +291,8 @@ void runStratumWorker(void *name) {
       
     if(WiFi.status() != WL_CONNECTED){
       // WiFi is disconnected, so reconnect now
-      mMonitor.NerdStatus = NM_Connecting;
+      mMonitor.NerdStatus.store(NM_Connecting, std::memory_order_release);
+      s_client_connected.store(false, std::memory_order_release);
       {
         std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
         MiningJobStop(job_pool, s_submission_map);
@@ -313,7 +321,7 @@ void runStratumWorker(void *name) {
       pending_len = 0; // Clear stale partial response after reconnecting
     }
 
-    if(!isMinerSuscribed)
+    if(!isMinerSuscribed.load(std::memory_order_acquire))
     {
       //Stop miner current jobs
       mWorker = init_mining_subscribe();
@@ -339,7 +347,7 @@ void runStratumWorker(void *name) {
       // STEP 3: Suggest pool difficulty
       tx_suggest_difficulty(client, currentPoolDifficulty);
 
-      isMinerSuscribed=true;
+      isMinerSuscribed.store(true, std::memory_order_release);
       uint32_t time_now = millis();
       mLastTXtoPool = time_now;
       last_job_time = time_now;
@@ -351,7 +359,7 @@ void runStratumWorker(void *name) {
       DEBUG_SERIAL_PRINTLN("  Detected more than 2 min without data form stratum server. Closing socket and reopening...");
       client.stop();
       pending_len = 0;
-      isMinerSuscribed=false;
+      isMinerSuscribed.store(false, std::memory_order_release);
       {
         std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
         MiningJobStop(job_pool, s_submission_map);
@@ -370,7 +378,7 @@ void runStratumWorker(void *name) {
       {
         client.stop();
         pending_len = 0;
-        isMinerSuscribed=false;
+        isMinerSuscribed.store(false, std::memory_order_release);
         {
           std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
           MiningJobStop(job_pool, s_submission_map);
@@ -413,7 +421,7 @@ void runStratumWorker(void *name) {
         }
         pending_len = 0;
         client.stop();
-        isMinerSuscribed = false;
+        isMinerSuscribed.store(false, std::memory_order_release);
         {
           std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
           MiningJobStop(job_pool, s_submission_map);
@@ -452,16 +460,17 @@ void runStratumWorker(void *name) {
                                             #endif
                                           }
                                           //Increse templates readed
-                                          templates++;
+                                          templates.fetch_add(1, std::memory_order_relaxed);
                                           job_pool++;
                                           s_working_current_job_id.store(job_pool & 0xFF, std::memory_order_release); //Terminate current job in thread
 
                                           last_job_time = millis();
                                           mLastTXtoPool = last_job_time;
 
-                                          uint32_t mh = hashes/1000000;
-                                          Mhashes += mh;
-                                          hashes -= mh*1000000;
+                                          uint32_t h = hashes.load(std::memory_order_relaxed);
+                                          uint32_t mh = h / 1000000;
+                                          Mhashes.fetch_add(mh, std::memory_order_relaxed);
+                                          hashes.fetch_sub(mh * 1000000, std::memory_order_relaxed);
 
                                           //Prepare data for new jobs
                                           mMiner=calculateMiningData(mWorker, mJob);
@@ -536,7 +545,7 @@ void runStratumWorker(void *name) {
                                         DEBUG_SERIAL_PRINTF("Mining notify parse error (line: %.100s), restarting\n", line.c_str());
                                         client.stop();
                                         pending_len = 0;
-                                        isMinerSuscribed=false;
+                                        isMinerSuscribed.store(false, std::memory_order_release);
                                         {
                                           std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
                                           MiningJobStop(job_pool, s_submission_map);
@@ -596,7 +605,7 @@ void runStratumWorker(void *name) {
       vTaskDelay(5 / portTICK_PERIOD_MS);
       uint32_t nonces_done = 0;
       std::vector<uint32_t> nonce_vector = i2c_harvest_slaves(i2c_slave_vector, job_pool & 0xFF, nonces_done);
-      hashes += nonces_done;
+      hashes.fetch_add(nonces_done, std::memory_order_relaxed);
       for (size_t n = 0; n < nonce_vector.size(); ++n)
       {
         std::shared_ptr<JobResult> result = std::make_shared<JobResult>();
@@ -671,7 +680,7 @@ void runStratumWorker(void *name) {
 
       // Only count actually processed nonces in hashrate (skipped nonces weren't computed)
       if (res->nonce_count > res->nonces_skipped) {
-        hashes += (res->nonce_count - res->nonces_skipped);
+        hashes.fetch_add(res->nonce_count - res->nonces_skipped, std::memory_order_relaxed);
       }
       if (res->difficulty > currentPoolDifficulty && job_pool == res->id && res->nonce != 0xFFFFFFFF)
       {
@@ -1342,47 +1351,60 @@ void restoreStat() {
 
   ret = nvs_open("state", NVS_READWRITE, &stat_handle);
 
-  double local_best_diff;
+  // Initialize all variables to prevent using garbage data if nvs_get_* fails
+  double local_best_diff = 0.0;
+  uint32_t nv_Mhashes = 0, nv_templates = 0;
+  uint64_t nv_upTime = 0;
+  uint32_t nv_shares = 0, nv_valids = 0;
+
+  // Read all values and check for errors
   size_t required_size = sizeof(double);
-  nvs_get_blob(stat_handle, "best_diff", &local_best_diff, &required_size);
-  nvs_get_u32(stat_handle, "Mhashes", &Mhashes);
-  uint32_t nv_shares, nv_valids;
-  nvs_get_u32(stat_handle, "shares", &nv_shares);
-  nvs_get_u32(stat_handle, "valids", &nv_valids);
-  shares.store(nv_shares, std::memory_order_release);
-  valids.store(nv_valids, std::memory_order_release);
-  nvs_get_u32(stat_handle, "templates", &templates);
-  nvs_get_u64(stat_handle, "upTime", &upTime);
+  esp_err_t err_diff = nvs_get_blob(stat_handle, "best_diff", &local_best_diff, &required_size);
+  esp_err_t err_mhashes = nvs_get_u32(stat_handle, "Mhashes", &nv_Mhashes);
+  esp_err_t err_shares = nvs_get_u32(stat_handle, "shares", &nv_shares);
+  esp_err_t err_valids = nvs_get_u32(stat_handle, "valids", &nv_valids);
+  esp_err_t err_templates = nvs_get_u32(stat_handle, "templates", &nv_templates);
+  esp_err_t err_uptime = nvs_get_u64(stat_handle, "upTime", &nv_upTime);
+
+  // Only validate CRC if all reads succeeded
+  bool all_reads_ok = (err_diff == ESP_OK && err_mhashes == ESP_OK &&
+                       err_shares == ESP_OK && err_valids == ESP_OK &&
+                       err_templates == ESP_OK && err_uptime == ESP_OK);
 
   uint32_t crc = crc32_reset();
   crc = crc32_add(crc, &local_best_diff, sizeof(local_best_diff));
-  crc = crc32_add(crc, &Mhashes, sizeof(Mhashes));
+  crc = crc32_add(crc, &nv_Mhashes, sizeof(nv_Mhashes));
   crc = crc32_add(crc, &nv_shares, sizeof(nv_shares));
   crc = crc32_add(crc, &nv_valids, sizeof(nv_valids));
-  crc = crc32_add(crc, &templates, sizeof(templates));
-  crc = crc32_add(crc, &upTime, sizeof(upTime));
+  crc = crc32_add(crc, &nv_templates, sizeof(nv_templates));
+  crc = crc32_add(crc, &nv_upTime, sizeof(nv_upTime));
   crc = crc32_finish(crc);
 
   uint32_t nv_crc = 0;
   esp_err_t crc_err = nvs_get_u32(stat_handle, "crc32", &nv_crc);
-  if (crc_err != ESP_OK || nv_crc != crc)
+  if (!all_reads_ok || crc_err != ESP_OK || nv_crc != crc)
   {
     DEBUG_SERIAL_PRINTF("[MONITOR] CRC validation failed (err=%d), resetting stats\n", crc_err);
     {
       std::lock_guard<std::mutex> diff_lock(best_diff_mutex);
       best_diff = 0.0;
     }
-    Mhashes = 0;
+    Mhashes.store(0, std::memory_order_release);
     shares.store(0, std::memory_order_release);
     valids.store(0, std::memory_order_release);
-    templates = 0;
-    upTime = 0;
+    templates.store(0, std::memory_order_release);
+    upTime.store(0, std::memory_order_release);
   }
   else
   {
-    // CRC valid, apply loaded value to best_diff
+    // CRC valid, apply loaded values to atomics and best_diff
     std::lock_guard<std::mutex> diff_lock(best_diff_mutex);
     best_diff = local_best_diff;
+    Mhashes.store(nv_Mhashes, std::memory_order_release);
+    shares.store(nv_shares, std::memory_order_release);
+    valids.store(nv_valids, std::memory_order_release);
+    templates.store(nv_templates, std::memory_order_release);
+    upTime.store(nv_upTime, std::memory_order_release);
   }
 }
 
@@ -1396,15 +1418,19 @@ void saveStat() {
     local_best_diff = best_diff;
   }
 
+  // Load atomic values for saving
+  uint32_t nv_Mhashes = Mhashes.load(std::memory_order_acquire);
+  uint32_t nv_shares = shares.load(std::memory_order_acquire);
+  uint32_t nv_valids = valids.load(std::memory_order_acquire);
+  uint32_t nv_templates = templates.load(std::memory_order_acquire);
+  uint64_t nv_upTime = upTime.load(std::memory_order_acquire);
+
   esp_err_t err;
   err = nvs_set_blob(stat_handle, "best_diff", &local_best_diff, sizeof(local_best_diff));
   if (err != ESP_OK) DEBUG_SERIAL_PRINTF("[MONITOR] Failed to save best_diff: %d\n", err);
 
-  err = nvs_set_u32(stat_handle, "Mhashes", Mhashes);
+  err = nvs_set_u32(stat_handle, "Mhashes", nv_Mhashes);
   if (err != ESP_OK) DEBUG_SERIAL_PRINTF("[MONITOR] Failed to save Mhashes: %d\n", err);
-
-  uint32_t nv_shares = shares.load(std::memory_order_acquire);
-  uint32_t nv_valids = valids.load(std::memory_order_acquire);
 
   err = nvs_set_u32(stat_handle, "shares", nv_shares);
   if (err != ESP_OK) DEBUG_SERIAL_PRINTF("[MONITOR] Failed to save shares: %d\n", err);
@@ -1412,19 +1438,19 @@ void saveStat() {
   err = nvs_set_u32(stat_handle, "valids", nv_valids);
   if (err != ESP_OK) DEBUG_SERIAL_PRINTF("[MONITOR] Failed to save valids: %d\n", err);
 
-  err = nvs_set_u32(stat_handle, "templates", templates);
+  err = nvs_set_u32(stat_handle, "templates", nv_templates);
   if (err != ESP_OK) DEBUG_SERIAL_PRINTF("[MONITOR] Failed to save templates: %d\n", err);
 
-  err = nvs_set_u64(stat_handle, "upTime", upTime);
+  err = nvs_set_u64(stat_handle, "upTime", nv_upTime);
   if (err != ESP_OK) DEBUG_SERIAL_PRINTF("[MONITOR] Failed to save upTime: %d\n", err);
 
   uint32_t crc = crc32_reset();
   crc = crc32_add(crc, &local_best_diff, sizeof(local_best_diff));
-  crc = crc32_add(crc, &Mhashes, sizeof(Mhashes));
+  crc = crc32_add(crc, &nv_Mhashes, sizeof(nv_Mhashes));
   crc = crc32_add(crc, &nv_shares, sizeof(nv_shares));
   crc = crc32_add(crc, &nv_valids, sizeof(nv_valids));
-  crc = crc32_add(crc, &templates, sizeof(templates));
-  crc = crc32_add(crc, &upTime, sizeof(upTime));
+  crc = crc32_add(crc, &nv_templates, sizeof(nv_templates));
+  crc = crc32_add(crc, &nv_upTime, sizeof(nv_upTime));
   crc = crc32_finish(crc);
 
   err = nvs_set_u32(stat_handle, "crc32", crc);
@@ -1445,7 +1471,12 @@ void closeStat() {
 
 void resetStat() {
     DEBUG_SERIAL_PRINTF("[MONITOR] Resetting NVS stats\n");
-    templates = hashes = Mhashes = totalKHashes = elapsedKHs = upTime = 0;
+    templates.store(0, std::memory_order_release);
+    hashes.store(0, std::memory_order_release);
+    Mhashes.store(0, std::memory_order_release);
+    totalKHashes.store(0, std::memory_order_release);
+    elapsedKHs.store(0, std::memory_order_release);
+    upTime.store(0, std::memory_order_release);
     shares.store(0, std::memory_order_release);
     valids.store(0, std::memory_order_release);
     {
@@ -1469,7 +1500,7 @@ void runMonitor(void *name)
 
   uint32_t seconds_elapsed = 0;
 
-  totalKHashes = (Mhashes * 1000) + hashes / 1000;
+  totalKHashes.store((Mhashes.load(std::memory_order_relaxed) * 1000) + hashes.load(std::memory_order_relaxed) / 1000, std::memory_order_relaxed);
   uint32_t last_update_millis = millis();
   uint32_t uptime_frac = 0;
 
@@ -1484,15 +1515,16 @@ void runMonitor(void *name)
     { 
       mLastCheck = now_millis;
       last_update_millis = now_millis;
-      unsigned long currentKHashes = (Mhashes * 1000) + hashes / 1000;
-      elapsedKHs = currentKHashes - totalKHashes;
-      totalKHashes = currentKHashes;
+      unsigned long currentKHashes = (Mhashes.load(std::memory_order_relaxed) * 1000) + hashes.load(std::memory_order_relaxed) / 1000;
+      uint32_t totalKH = totalKHashes.load(std::memory_order_relaxed);
+      elapsedKHs.store(currentKHashes - totalKH, std::memory_order_relaxed);
+      totalKHashes.store(currentKHashes, std::memory_order_relaxed);
 
       uptime_frac += mElapsed;
       while (uptime_frac >= 1000)
       {
         uptime_frac -= 1000;
-        upTime ++;
+        upTime.fetch_add(1, std::memory_order_relaxed);
       }
 
       // Serial.printf("[HASHRATE] %.2f KH/s\n", (float)elapsedKHs * 1000.0 / mElapsed);
@@ -1500,12 +1532,14 @@ void runMonitor(void *name)
       drawCurrentScreen(mElapsed);
 
       // Monitor state when hashrate is 0.0
-      if (elapsedKHs == 0)
+      if (elapsedKHs.load(std::memory_order_relaxed) == 0)
       {
+        bool subscribed = isMinerSuscribed.load(std::memory_order_acquire);
+        bool connected = s_client_connected.load(std::memory_order_acquire);
         DEBUG_SERIAL_PRINTF(">>> [i] Miner: newJob>%s / inRun>%s) - Client: connected>%s / subscribed>%s / wificonnected>%s\n",
             "true",//(1) ? "true" : "false",
-            isMinerSuscribed ? "true" : "false",
-            client.connected() ? "true" : "false", isMinerSuscribed ? "true" : "false", WiFi.status() == WL_CONNECTED ? "true" : "false");
+            subscribed ? "true" : "false",
+            connected ? "true" : "false", subscribed ? "true" : "false", WiFi.status() == WL_CONNECTED ? "true" : "false");
       }
 
       #ifdef DEBUG_MEMORY

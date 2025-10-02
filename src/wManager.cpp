@@ -269,7 +269,7 @@ void init_WifiManager()
         //No configuramos timeout al modulo
         wm.setConfigPortalBlocking(true); //Hacemos que el portal SI bloquee el firmware
         drawSetupScreen();
-        mMonitor.NerdStatus = NM_Connecting;
+        mMonitor.NerdStatus.store(NM_Connecting, std::memory_order_release);
         wm.startConfigPortal(apName, DEFAULT_WIFIPW);
 
         if (shouldSaveConfig)
@@ -298,7 +298,7 @@ void init_WifiManager()
     else
     {
         //Tratamos de conectar con la configuración inicial ya almacenada
-        mMonitor.NerdStatus = NM_Connecting;
+        mMonitor.NerdStatus.store(NM_Connecting, std::memory_order_release);
         // disable captive portal redirection
         wm.setCaptivePortalEnable(true); 
         wm.setConfigPortalBlocking(true);

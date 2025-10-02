@@ -6,6 +6,7 @@
 #include <WiFiUdp.h>
 #include <list>
 #include <atomic>
+#include <mutex>
 #include "mining.h"
 #include "utils.h"
 #include "monitor.h"
@@ -13,17 +14,18 @@
 #include "drivers/devices/device.h"
 #include "logging.h"
 
-extern uint32_t templates;
-extern uint32_t hashes;
-extern uint32_t Mhashes;
-extern uint32_t totalKHashes;
-extern uint32_t elapsedKHs;
-extern uint64_t upTime;
+extern std::atomic<uint32_t> templates;
+extern std::atomic<uint32_t> hashes;
+extern std::atomic<uint32_t> Mhashes;
+extern std::atomic<uint32_t> totalKHashes;
+extern std::atomic<uint32_t> elapsedKHs;
+extern std::atomic<uint64_t> upTime;
 
 extern std::atomic<uint32_t> shares; // increase if blockhash has 32 bits of zeroes
 extern std::atomic<uint32_t> valids; // increased if blockhash <= targethalfshares
 
 extern double best_diff; // track best diff
+extern std::mutex best_diff_mutex; // mutex for best_diff
 
 extern monitor_data mMonitor;
 
@@ -273,7 +275,7 @@ static double s_last_avg_hashrate = -1.0;  // Track last value to avoid recalcul
 
 String getCurrentHashRate(unsigned long mElapsed)
 {
-  double hashrate = (double)elapsedKHs * 1000.0 / (double)mElapsed;
+  double hashrate = (double)elapsedKHs.load(std::memory_order_relaxed) * 1000.0 / (double)mElapsed;
 
   s_hashrate_summ += hashrate;
   s_hashrate_avg_list.push_back(hashrate);
@@ -335,13 +337,16 @@ mining_data getMiningData(unsigned long mElapsed)
 {
   mining_data data;
 
-  // bestDiff - use temp buffer for suffix_string
+  // bestDiff - use temp buffer for suffix_string (read with mutex)
   char bestDiffBuf[16];
-  suffix_string(best_diff, bestDiffBuf, sizeof(bestDiffBuf), 0);
+  {
+    std::lock_guard<std::mutex> diff_lock(best_diff_mutex);
+    suffix_string(best_diff, bestDiffBuf, sizeof(bestDiffBuf), 0);
+  }
   data.bestDiff = bestDiffBuf;
 
   // timeMining - format uptime
-  uint64_t tm = upTime;
+  uint64_t tm = upTime.load(std::memory_order_relaxed);
   int secs = tm % 60;
   tm /= 60;
   int mins = tm % 60;
@@ -364,10 +369,10 @@ mining_data getMiningData(unsigned long mElapsed)
 
   // Direct String assignments - numeric values auto-convert
   data.completedShares = shares.load(std::memory_order_relaxed);
-  data.totalMHashes = Mhashes;
-  data.totalKHashes = totalKHashes;
+  data.totalMHashes = Mhashes.load(std::memory_order_relaxed);
+  data.totalKHashes = totalKHashes.load(std::memory_order_relaxed);
   data.currentHashRate = getCurrentHashRate(mElapsed);
-  data.templates = templates;
+  data.templates = templates.load(std::memory_order_relaxed);
   data.valids = valids.load(std::memory_order_relaxed);
   data.temp = cachedTemp;
   data.currentTime = getTime();
@@ -380,7 +385,7 @@ clock_data getClockData(unsigned long mElapsed)
   clock_data data;
 
   data.completedShares = shares.load(std::memory_order_relaxed);
-  data.totalKHashes = totalKHashes;
+  data.totalKHashes = totalKHashes.load(std::memory_order_relaxed);
   data.currentHashRate = getCurrentHashRate(mElapsed);
   data.btcPrice = getBTCprice();
   data.blockHeight = getBlockHeight();
@@ -408,7 +413,7 @@ coin_data getCoinData(unsigned long mElapsed)
   updateGlobalData(); // Update gData vars asking mempool APIs
 
   data.completedShares = shares.load(std::memory_order_relaxed);
-  data.totalKHashes = totalKHashes;
+  data.totalKHashes = totalKHashes.load(std::memory_order_relaxed);
   data.currentHashRate = getCurrentHashRate(mElapsed);
   data.btcPrice = getBTCprice();
   data.currentTime = getTime();

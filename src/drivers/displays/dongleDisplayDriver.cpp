@@ -196,7 +196,8 @@ void dongleDisplay_DoLedStuff(unsigned long frame)
     return;
   }
 
-  switch (mMonitor.NerdStatus)
+  NMState status = mMonitor.NerdStatus.load(std::memory_order_acquire);
+  switch (status)
   {
   case NM_waitingConfig:
     brightness = MAX_BRIGHTNESS;

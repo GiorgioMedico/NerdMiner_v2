@@ -121,7 +121,7 @@ void setup()
   delay(2*SECOND_MS);
 
   /******** SHOW LED INIT STATUS (devices without screen) *****/
-  mMonitor.NerdStatus = NM_waitingConfig;
+  mMonitor.NerdStatus.store(NM_waitingConfig, std::memory_order_release);
   doLedStuff(0);
 
 #ifdef SDMMC_1BIT_FIX

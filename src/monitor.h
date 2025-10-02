@@ -2,6 +2,7 @@
 #define MONITOR_API_H
 
 #include <Arduino.h>
+#include <atomic>
 
 // Monitor states
 #define SCREEN_MINING   0
@@ -47,7 +48,7 @@ enum NMState {
 typedef struct{
   uint8_t screen;
   bool rotation;
-  NMState NerdStatus;
+  std::atomic<NMState> NerdStatus;
 }monitor_data;
 
 typedef struct{

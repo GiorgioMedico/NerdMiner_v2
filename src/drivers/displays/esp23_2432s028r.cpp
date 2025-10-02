@@ -584,7 +584,8 @@ void esp32_2432S028R_DoLedStuff(unsigned long frame)
     currentScreen = currentDisplayDriver->current_cyclic_screen;
 #endif
 
-  switch (mMonitor.NerdStatus)
+  NMState status = mMonitor.NerdStatus.load(std::memory_order_acquire);
+  switch (status)
   {
   case NM_waitingConfig:
     digitalWrite(LED_PIN, LOW); // LED encendido de forma continua
