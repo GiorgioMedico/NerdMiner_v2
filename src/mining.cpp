@@ -171,7 +171,8 @@ struct JobResult
 {
   uint32_t id;
   uint32_t nonce;
-  uint32_t nonce_count;
+  uint32_t nonce_count;        // Successfully processed nonces
+  uint32_t nonces_skipped;     // Nonces skipped due to SHA hardware timeout
   double difficulty;
   uint8_t hash[32];
 };
@@ -183,7 +184,9 @@ std::list<std::shared_ptr<JobRequest>> s_job_request_list_sw;
 std::list<std::shared_ptr<JobRequest>> s_job_request_list_hw;
 #endif
 std::list<std::shared_ptr<JobResult>> s_job_result_list;
-static volatile uint8_t s_working_current_job_id = 0xFF;
+
+// Atomic job ID for cross-thread work cancellation (proper memory barriers)
+static std::atomic<uint8_t> s_working_current_job_id{0xFF};
 
 static void JobPush(std::list<std::shared_ptr<JobRequest>> &job_list,  uint32_t id, uint32_t nonce_start, uint32_t nonce_count, double difficulty,
                     const uint8_t* sha_buffer, const uint32_t* midstate, const uint32_t* bake)
@@ -204,6 +207,7 @@ struct Submission
   double diff;
   bool is32bit;
   bool isValid;
+  uint32_t timestamp_ms;  // Timestamp when submission was created (for timeout cleanup)
 };
 
 static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, std::shared_ptr<Submission>> & submission_map)
@@ -216,7 +220,7 @@ static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, std::shared_ptr
     s_job_request_list_hw.clear();
     #endif
   }
-  s_working_current_job_id = 0xFF;
+  s_working_current_job_id.store(0xFF, std::memory_order_release);
   job_pool = 0xFFFFFFFF;
   // NOTE: Caller MUST clear submission_map while holding s_submission_mutex
   // to prevent race conditions. This function does NOT clear the map.
@@ -265,11 +269,16 @@ void runStratumWorker(void *name) {
   }
 #endif
 
-  // connect to pool  
+  // connect to pool
   double currentPoolDifficulty = DEFAULT_DIFFICULTY;
   uint32_t nonce_pool = 0;
   uint32_t job_pool = 0xFFFFFFFF;
   uint32_t last_job_time = millis();
+
+  // Static buffer for accumulating partial pool responses (eliminates heap fragmentation)
+  // Size must match MAX_POOL_LINE_SIZE to handle all valid stratum messages
+  static char pending_buffer[MAX_POOL_LINE_SIZE + 1];
+  static uint16_t pending_len = 0;
 
   while(true) {
       
@@ -281,11 +290,13 @@ void runStratumWorker(void *name) {
         MiningJobStop(job_pool, s_submission_map);
         s_submission_map.clear();
       }
+      pending_len = 0; // Drop any partial data from the old socket
       WiFi.reconnect();
       vTaskDelay(5000 / portTICK_PERIOD_MS);
       continue;
     } 
 
+    bool wasDisconnected = !client.connected();
     if(!checkPoolConnection()){
       //If server is not reachable add random delay for connection retries
       //Generate value between 1 and 60 secs
@@ -298,6 +309,10 @@ void runStratumWorker(void *name) {
       continue;
     }
 
+    if (wasDisconnected) {
+      pending_len = 0; // Clear stale partial response after reconnecting
+    }
+
     if(!isMinerSuscribed)
     {
       //Stop miner current jobs
@@ -306,6 +321,7 @@ void runStratumWorker(void *name) {
       // STEP 1: Pool server connection (SUBSCRIBE)
       if(!tx_mining_subscribe(client, mWorker)) {
         client.stop();
+        pending_len = 0;
         {
           std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
           MiningJobStop(job_pool, s_submission_map);
@@ -334,6 +350,7 @@ void runStratumWorker(void *name) {
       //Restart connection
       DEBUG_SERIAL_PRINTLN("  Detected more than 2 min without data form stratum server. Closing socket and reopening...");
       client.stop();
+      pending_len = 0;
       isMinerSuscribed=false;
       {
         std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
@@ -352,6 +369,7 @@ void runStratumWorker(void *name) {
       if (time_now >= last_job_time + 10*60*1000)
       {
         client.stop();
+        pending_len = 0;
         isMinerSuscribed=false;
         {
           std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
@@ -372,31 +390,28 @@ void runStratumWorker(void *name) {
     //Read pending messages from pool
     while(client.connected() && client.available())
     {
-      // Read line with size limit to protect against buffer overflow
-      String line;
-      line.reserve(256); // Reserve reasonable size for typical pool messages
-      size_t bytesRead = 0;
+      // Accumulate data until we get a full line (preserve partial reads across socket timeouts)
       bool foundNewline = false;
 
-      while (client.available() && bytesRead < MAX_POOL_LINE_SIZE) {
+      while (client.available() && pending_len < sizeof(pending_buffer) - 1) {
         char c = client.read();
         if (c == '\n') {
           foundNewline = true;
           break;
         }
         if (c != '\r') { // Skip carriage return
-          line += c;
-          bytesRead++;
+          pending_buffer[pending_len++] = c;
         }
       }
 
       // If we hit the size limit without finding newline, discard rest of line and disconnect
-      if (!foundNewline && bytesRead >= MAX_POOL_LINE_SIZE) {
-        DEBUG_SERIAL_PRINTLN("Pool response too large, disconnecting");
+      if (!foundNewline && pending_len >= sizeof(pending_buffer) - 1) {
+        DEBUG_SERIAL_PRINTF("Pool response too large (%u bytes), disconnecting\n", pending_len);
         // Consume remaining data on this line
         while (client.available()) {
           if (client.read() == '\n') break;
         }
+        pending_len = 0;
         client.stop();
         isMinerSuscribed = false;
         {
@@ -408,8 +423,19 @@ void runStratumWorker(void *name) {
         break;
       }
 
-      if (line.length() == 0 && !foundNewline) {
-        continue; // Empty line or no data yet
+      // Wait for more data if newline not found yet
+      if (!foundNewline) {
+        continue;
+      }
+
+      // Null-terminate and create String from buffer
+      pending_buffer[pending_len] = '\0';
+      String line = String(pending_buffer);
+      pending_len = 0;
+
+      // Ignore empty keepalive lines
+      if (line.length() == 0) {
+        continue;
       }
       //DEBUG_SERIAL_PRINTLN("  Received message from pool");      
       stratum_method result = parse_mining_method(line);
@@ -417,6 +443,7 @@ void runStratumWorker(void *name) {
       {
           case MINING_NOTIFY:         if(parse_mining_notify(line, mJob))
                                       {
+                                          // Clear job lists to prevent stale work
                                           {
                                             std::lock_guard<std::mutex> lock(s_job_mutex);
                                             s_job_request_list_sw.clear();
@@ -427,7 +454,7 @@ void runStratumWorker(void *name) {
                                           //Increse templates readed
                                           templates++;
                                           job_pool++;
-                                          s_working_current_job_id = job_pool & 0xFF; //Terminate current job in thread
+                                          s_working_current_job_id.store(job_pool & 0xFF, std::memory_order_release); //Terminate current job in thread
 
                                           last_job_time = millis();
                                           mLastTXtoPool = last_job_time;
@@ -471,7 +498,7 @@ void runStratumWorker(void *name) {
                                             #endif
                                               nonce_pool = NONCE_START_RANDOM;
                                           #endif
-                                          
+
 
                                           {
                                             std::lock_guard<std::mutex> lock(s_job_mutex);
@@ -508,6 +535,7 @@ void runStratumWorker(void *name) {
                                       {
                                         DEBUG_SERIAL_PRINTF("Mining notify parse error (line: %.100s), restarting\n", line.c_str());
                                         client.stop();
+                                        pending_len = 0;
                                         isMinerSuscribed=false;
                                         {
                                           std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
@@ -572,6 +600,7 @@ void runStratumWorker(void *name) {
       for (size_t n = 0; n < nonce_vector.size(); ++n)
       {
         std::shared_ptr<JobResult> result = std::make_shared<JobResult>();
+        result->nonces_skipped = 0;  // I2C results always compute all assigned nonces
         uint32_t nonce = nonce_vector[n];
         if (nerd_sha256d_baked_nonce(diget_mid, bake, __builtin_bswap32(nonce), result->hash))
         {
@@ -597,40 +626,42 @@ void runStratumWorker(void *name) {
     vTaskDelay(50 / portTICK_PERIOD_MS); //Small delay
     #endif
 
-    
+
     if (job_pool != 0xFFFFFFFF)
     {
-      std::lock_guard<std::mutex> lock(s_job_mutex);
-      job_result_list.insert(job_result_list.end(), s_job_result_list.begin(), s_job_result_list.end());
-      s_job_result_list.clear();
+      {
+        std::lock_guard<std::mutex> lock(s_job_mutex);
+        job_result_list.insert(job_result_list.end(), s_job_result_list.begin(), s_job_result_list.end());
+        s_job_result_list.clear();
 
 #if 1
-      while (s_job_request_list_sw.size() < JOB_QUEUE_SIZE)
-      {
-        JobPush( s_job_request_list_sw, job_pool, nonce_pool, NONCE_PER_JOB_SW, currentPoolDifficulty, mMiner.bytearray_blockheader, diget_mid, bake);
-        #ifdef RANDOM_NONCE
-        nonce_pool = RandomGet() & RANDOM_NONCE_MASK;
-        #else
-        nonce_pool += NONCE_PER_JOB_SW;
-        #endif
-      }
+        while (s_job_request_list_sw.size() < JOB_QUEUE_SIZE)
+        {
+          JobPush( s_job_request_list_sw, job_pool, nonce_pool, NONCE_PER_JOB_SW, currentPoolDifficulty, mMiner.bytearray_blockheader, diget_mid, bake);
+          #ifdef RANDOM_NONCE
+          nonce_pool = RandomGet() & RANDOM_NONCE_MASK;
+          #else
+          nonce_pool += NONCE_PER_JOB_SW;
+          #endif
+        }
 #endif
 
-      #ifdef HARDWARE_SHA265
-      while (s_job_request_list_hw.size() < JOB_QUEUE_SIZE)
-      {
-        #if defined(CONFIG_IDF_TARGET_ESP32)
-          JobPush( s_job_request_list_hw, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, sha_buffer_swap, hw_midstate, bake);
-        #else
-          JobPush( s_job_request_list_hw, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, mMiner.bytearray_blockheader, hw_midstate, bake);
-        #endif
-        #ifdef RANDOM_NONCE
-        nonce_pool = RandomGet() & RANDOM_NONCE_MASK;
-        #else
-        nonce_pool += NONCE_PER_JOB_HW;
+        #ifdef HARDWARE_SHA265
+        while (s_job_request_list_hw.size() < JOB_QUEUE_SIZE)
+        {
+          #if defined(CONFIG_IDF_TARGET_ESP32)
+            JobPush( s_job_request_list_hw, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, sha_buffer_swap, hw_midstate, bake);
+          #else
+            JobPush( s_job_request_list_hw, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, mMiner.bytearray_blockheader, hw_midstate, bake);
+          #endif
+          #ifdef RANDOM_NONCE
+          nonce_pool = RandomGet() & RANDOM_NONCE_MASK;
+          #else
+          nonce_pool += NONCE_PER_JOB_HW;
+          #endif
+        }
         #endif
       }
-      #endif
     }
 
     while (!job_result_list.empty())
@@ -638,7 +669,10 @@ void runStratumWorker(void *name) {
       std::shared_ptr<JobResult> res = job_result_list.front();
       job_result_list.pop_front();
 
-      hashes += res->nonce_count;
+      // Only count actually processed nonces in hashrate (skipped nonces weren't computed)
+      if (res->nonce_count > res->nonces_skipped) {
+        hashes += (res->nonce_count - res->nonces_skipped);
+      }
       if (res->difficulty > currentPoolDifficulty && job_pool == res->id && res->nonce != 0xFFFFFFFF)
       {
         if (!client.connected())
@@ -656,6 +690,7 @@ void runStratumWorker(void *name) {
         std::shared_ptr<Submission> submission = std::make_shared<Submission>();
         submission->diff = res->difficulty;
         submission->is32bit = (res->hash[29] == 0 && res->hash[28] == 0);
+        submission->timestamp_ms = millis();  // Record submission time
         if (submission->is32bit)
         {
           submission->isValid = checkValid(res->hash, mMiner.bytearray_target);
@@ -664,11 +699,46 @@ void runStratumWorker(void *name) {
 
         {
           std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
+
+          // Check for ID collision (rare but possible after wraparound)
+          auto existing = s_submission_map.find(sumbit_id);
+          if (existing != s_submission_map.end()) {
+            DEBUG_SERIAL_PRINTF("[WARN] Submission ID collision: %lu already pending\n", sumbit_id);
+            DEBUG_SERIAL_PRINTF("[WARN] Overwriting old submission (ID wraparound detected)\n");
+            s_submission_map.erase(existing);
+          }
+
           s_submission_map.insert(std::make_pair(sumbit_id, submission));
-          // Limit map size to prevent unbounded growth
-          // Remove oldest entries to maintain maximum size
-          while (s_submission_map.size() > SUBMISSION_MAP_MAX)
-          {
+
+          // Cleanup strategy: First evict old entries (60s timeout), then FIFO if still oversized
+          // Only scan for timeouts if map is getting full (avoid hot path overhead)
+          constexpr size_t CLEANUP_THRESHOLD = SUBMISSION_MAP_MAX / 2;
+
+          if (s_submission_map.size() >= CLEANUP_THRESHOLD) {
+            uint32_t now = millis();
+            constexpr uint32_t SUBMISSION_TIMEOUT_MS = 60000;  // 60 second pool response timeout
+
+            // First pass: Remove timed-out submissions
+            for (auto it = s_submission_map.begin(); it != s_submission_map.end(); ) {
+              // Handle timestamp wraparound (occurs every ~49 days)
+              uint32_t age = (now >= it->second->timestamp_ms)
+                            ? (now - it->second->timestamp_ms)
+                            : (UINT32_MAX - it->second->timestamp_ms + now);
+
+              if (age > SUBMISSION_TIMEOUT_MS) {
+                DEBUG_SERIAL_PRINTF("[WARN] Evicting timed-out submission ID=%lu (age=%lums)\n",
+                                    it->first, age);
+                it = s_submission_map.erase(it);
+              } else {
+                ++it;
+              }
+            }
+          }
+
+          // Second pass: If still oversized, evict oldest entries (shouldn't happen often)
+          while (s_submission_map.size() > SUBMISSION_MAP_MAX) {
+            DEBUG_SERIAL_PRINTF("[WARN] Evicting oldest submission ID=%lu (map full)\n",
+                                s_submission_map.begin()->first);
             s_submission_map.erase(s_submission_map.begin());
           }
         }
@@ -712,6 +782,7 @@ void minerWorkerSw(void * task_id)
       result->nonce = 0xFFFFFFFF;
       result->id = job->id;
       result->nonce_count = job->nonce_count;
+      result->nonces_skipped = 0;  // SW workers don't skip nonces (no SHA hardware)
       uint8_t job_in_work = job->id & 0xFF;
       for (uint32_t n = 0; n < job->nonce_count; ++n)
       {
@@ -727,7 +798,7 @@ void minerWorkerSw(void * task_id)
           }
         }
 
-        if ( (uint16_t)(n & 0xFF) == 0 &&s_working_current_job_id != job_in_work)
+        if ( (uint16_t)(n & 0xFF) == 0 && s_working_current_job_id.load(std::memory_order_acquire) != job_in_work)
         {
           result->nonce_count = n+1;
           break;
@@ -923,6 +994,7 @@ void minerWorkerHw(void * task_id)
       result->id = job->id;
       result->nonce = 0xFFFFFFFF;
       result->nonce_count = job->nonce_count;
+      result->nonces_skipped = 0;  // Track SHA hardware timeouts
       result->difficulty = job->difficulty;
       uint8_t job_in_work = job->id & 0xFF;
       memcpy(digest_mid, job->midstate, sizeof(digest_mid));
@@ -948,6 +1020,7 @@ void minerWorkerHw(void * task_id)
         if (!nerd_sha_hal_wait_idle()) {
           // Reset SHA hardware to known state after timeout
           nerd_sha_hw_reset();
+          result->nonces_skipped++;
           continue;
         }
         nerd_sha_ll_fill_text_block_sha256_inter();
@@ -957,6 +1030,7 @@ void minerWorkerHw(void * task_id)
         if (!nerd_sha_hal_wait_idle()) {
           // Reset SHA hardware to known state after timeout
           nerd_sha_hw_reset();
+          result->nonces_skipped++;
           continue;
         }
         if (nerd_sha_ll_read_digest_if(hash))
@@ -988,7 +1062,7 @@ void minerWorkerHw(void * task_id)
         }
         if (
              (uint8_t)(n & 0xFF) == 0 &&
-             s_working_current_job_id != job_in_work)
+             s_working_current_job_id.load(std::memory_order_acquire) != job_in_work)
         {
           result->nonce_count = n-job->nonce_start+1;
           break;
@@ -1170,6 +1244,7 @@ void minerWorkerHw(void * task_id)
       result->id = job->id;
       result->nonce = 0xFFFFFFFF;
       result->nonce_count = job->nonce_count;
+      result->nonces_skipped = 0;  // Track SHA hardware timeouts
       result->difficulty = job->difficulty;
       uint8_t job_in_work = job->id & 0xFF;
       memcpy(sha_buffer, job->sha_buffer, 80);
@@ -1188,6 +1263,7 @@ void minerWorkerHw(void * task_id)
         if (!nerd_sha_hal_wait_idle()) {
           // Reset SHA hardware to known state after timeout
           nerd_sha_hw_reset();
+          result->nonces_skipped++;
           continue;
         }
         nerd_sha_ll_fill_text_block_sha256_upper(sha_buffer+64, job->nonce_start+n);
@@ -1196,6 +1272,7 @@ void minerWorkerHw(void * task_id)
         if (!nerd_sha_hal_wait_idle()) {
           // Reset SHA hardware to known state after timeout
           nerd_sha_hw_reset();
+          result->nonces_skipped++;
           continue;
         }
         sha_ll_load(SHA2_256);
@@ -1204,6 +1281,7 @@ void minerWorkerHw(void * task_id)
         if (!nerd_sha_hal_wait_idle()) {
           // Reset SHA hardware to known state after timeout
           nerd_sha_hw_reset();
+          result->nonces_skipped++;
           continue;
         }
         nerd_sha_ll_fill_text_block_sha256_double();
@@ -1212,6 +1290,7 @@ void minerWorkerHw(void * task_id)
         if (!nerd_sha_hal_wait_idle()) {
           // Reset SHA hardware to known state after timeout
           nerd_sha_hw_reset();
+          result->nonces_skipped++;
           continue;
         }
         sha_ll_load(SHA2_256);
@@ -1231,7 +1310,7 @@ void minerWorkerHw(void * task_id)
         }
         if (
              (uint8_t)(n & 0xFF) == 0 &&
-             s_working_current_job_id != job_in_work)
+             s_working_current_job_id.load(std::memory_order_acquire) != job_in_work)
         {
           result->nonce_count = n+1;
           break;

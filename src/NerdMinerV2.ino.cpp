@@ -95,6 +95,7 @@ void setup()
     // button1.attachMultiClick(alternateScreenState);
     button1.setPressMs(2*SECOND_MS);
     button1.attachClick(alternateScreenState);
+    button1.attachLongPressStart(reset_configuration);
   #endif
 
   #if defined(PIN_BUTTON_1) && defined(PIN_BUTTON_2) //Button 1 of two button device

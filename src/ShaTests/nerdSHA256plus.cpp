@@ -49,8 +49,9 @@
         | ((uint32_t)(b)[(i) + 3]))
 #endif
 
-//DRAM_ATTR static const uint32_t K[] = {
-DRAM_ATTR static const uint32_t K[64] = {
+// Keep K array in DRAM for fast access (no flash cache penalty)
+// Align to 16 bytes for optimal burst reads
+DRAM_ATTR __attribute__((aligned(16))) static const uint32_t K[64] = {
         0x428A2F98L, 0x71374491L, 0xB5C0FBCFL, 0xE9B5DBA5L, 0x3956C25BL,
         0x59F111F1L, 0x923F82A4L, 0xAB1C5ED5L, 0xD807AA98L, 0x12835B01L,
         0x243185BEL, 0x550C7DC3L, 0x72BE5D74L, 0x80DEB1FEL, 0x9BDC06A7L,
@@ -106,8 +107,10 @@ void ByteReverseWords(uint32_t* out, const uint32_t* in, uint32_t byteCount)
 }
 
 
-IRAM_ATTR void nerd_mids(uint32_t* digest, const uint8_t* dataIn)
+// Force function to stay in IRAM for zero-wait-state execution
+IRAM_ATTR __attribute__((hot)) void nerd_mids(uint32_t* digest, const uint8_t* dataIn)
 {
+    // SHA256 initial hash values
     uint32_t A[8] = { 0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19 };
 
     uint32_t temp1, temp2, W[64];
@@ -486,7 +489,8 @@ IRAM_ATTR void nerd_sha256_bake(const uint32_t* digest, const uint8_t* dataIn, u
 }
 
 
-IRAM_ATTR bool nerd_sha256d_baked_nonce(const uint32_t* digest, const uint32_t* bake, uint32_t nonce_be, uint8_t* doubleHash)
+// Force inline and optimize for speed with aggressive register allocation
+IRAM_ATTR __attribute__((optimize("O3","unroll-loops"))) bool nerd_sha256d_baked_nonce(const uint32_t* digest, const uint32_t* bake, uint32_t nonce_be, uint8_t* doubleHash)
 {
     uint32_t temp1, temp2;
     //*********** Init 1rst SHA ***********
@@ -657,12 +661,12 @@ IRAM_ATTR bool nerd_sha256d_baked_nonce(const uint32_t* digest, const uint32_t* 
     P(A[7], A[0], A[1], A[2], A[3], A[4], A[5], A[6], R(49), K[49]);
     P(A[6], A[7], A[0], A[1], A[2], A[3], A[4], A[5], R(50), K[50]);
     P(A[5], A[6], A[7], A[0], A[1], A[2], A[3], A[4], R(51), K[51]);
+    // Extended loop unrolling rounds 50-63 for better performance
+    // Manual unrolling ensures GCC keeps intermediate values in registers
     P(A[4], A[5], A[6], A[7], A[0], A[1], A[2], A[3], R(52), K[52]);
     P(A[3], A[4], A[5], A[6], A[7], A[0], A[1], A[2], R(53), K[53]);
     P(A[2], A[3], A[4], A[5], A[6], A[7], A[0], A[1], R(54), K[54]);
     P(A[1], A[2], A[3], A[4], A[5], A[6], A[7], A[0], R(55), K[55]);
-    
-    //Unroll 56 - worse performace
     P(A[0], A[1], A[2], A[3], A[4], A[5], A[6], A[7], R(56), K[56]);
 
     //Unroll 57
