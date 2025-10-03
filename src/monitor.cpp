@@ -312,8 +312,8 @@ String getCurrentHashRate(unsigned long mElapsed)
     }
   }
 
-  // Only update string if hashrate changed significantly (> 0.5 difference)
-  if (abs(avg_hashrate - s_last_avg_hashrate) > 0.5)
+  // Only update string if hashrate changed significantly
+  if (abs(avg_hashrate - s_last_avg_hashrate) > 0.2)
   {
     s_last_avg_hashrate = avg_hashrate;
     switch (s_hashrate_scale)
