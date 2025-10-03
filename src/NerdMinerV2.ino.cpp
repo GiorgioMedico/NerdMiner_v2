@@ -161,35 +161,35 @@ void setup()
   //  char *name = (char*) malloc(32);
   //  sprintf(name, "(%d)", i);
 
-  // Start mining tasks
+  // Start mining tasks - HW pinned to Core 0, SW unpinned to fill gaps
   //BaseType_t res = xTaskCreate(runWorker, name, 35000, (void*)name, 1, NULL);
   TaskHandle_t minerTask1, minerTask2 = NULL;
   #ifdef HARDWARE_SHA265
     #if defined(CONFIG_IDF_TARGET_ESP32)
-    xTaskCreate(minerWorkerHw, "MinerHw-0", 3584, (void*)0, 3, &minerTask1); // Reduced for ESP32 classic
-    //xTaskCreate(minerWorkerSw, "MinerSw-0", 5000, (void*)0, 1, &minerTask1); // Reduced for ESP32 classic
+    xTaskCreatePinnedToCore(minerWorkerHw, "MinerHw-0", 3584, (void*)0, 3, &minerTask1, 0); // HW miner pinned to Core 0, Priority 3
+    //xTaskCreate(minerWorkerSw, "MinerSw-0", 5000, (void*)0, 2, &minerTask1); // Reduced for ESP32 classic
     #else
-    xTaskCreate(minerWorkerHw, "MinerHw-0", 4096, (void*)0, 3, &minerTask1);
+    xTaskCreatePinnedToCore(minerWorkerHw, "MinerHw-0", 4096, (void*)0, 3, &minerTask1, 0); // HW miner pinned to Core 0, Priority 3
     #endif
   #else
     #if defined(CONFIG_IDF_TARGET_ESP32)
-    xTaskCreate(minerWorkerSw, "MinerSw-0", 5000, (void*)0, 1, &minerTask1); // Reduced for ESP32 classic
+    xTaskCreate(minerWorkerSw, "MinerSw-0", 5000, (void*)0, 2, &minerTask1); // SW miner unpinned, Priority 2
     #else
-    xTaskCreate(minerWorkerSw, "MinerSw-0", 6000, (void*)0, 1, &minerTask1);
+    xTaskCreate(minerWorkerSw, "MinerSw-0", 6000, (void*)0, 2, &minerTask1); // SW miner unpinned, Priority 2
     #endif
   #endif
   esp_task_wdt_add(minerTask1);
 
 #if (SOC_CPU_CORES_NUM >= 2)
   #if defined(CONFIG_IDF_TARGET_ESP32)
-  xTaskCreate(minerWorkerSw, "MinerSw-1", 5000, (void*)1, 1, &minerTask2); // Reduced for ESP32 classic
+  xTaskCreate(minerWorkerSw, "MinerSw-1", 5000, (void*)1, 2, &minerTask2); // SW miner unpinned, Priority 2
   #else
-  xTaskCreate(minerWorkerSw, "MinerSw-1", 6000, (void*)1, 1, &minerTask2);
+  xTaskCreate(minerWorkerSw, "MinerSw-1", 6000, (void*)1, 2, &minerTask2); // SW miner unpinned, Priority 2
   #endif
   esp_task_wdt_add(minerTask2);
 #endif
 
-  vTaskPrioritySet(NULL, 4);
+  vTaskPrioritySet(NULL, 2); // Main loop priority reduced to 2 (was 4)
 
   /******** MONITOR SETUP *****/
   setup_monitor();

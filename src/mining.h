@@ -13,11 +13,11 @@
 // Network safety
 #define MAX_POOL_LINE_SIZE      4096
 
-// Hardware SHA timeout
-#define SHA_HARDWARE_TIMEOUT_CYCLES 100000
+// Hardware SHA timeout (reduced for faster recovery from stuck hardware)
+#define SHA_HARDWARE_TIMEOUT_CYCLES 50000
 
-// Job queue sizes
-#define JOB_QUEUE_SIZE          4
+// Job queue sizes (increased for better miner throughput)
+#define JOB_QUEUE_SIZE          8
 #define RESULT_LIST_SIZE        16
 #define SUBMISSION_MAP_MAX       16
 

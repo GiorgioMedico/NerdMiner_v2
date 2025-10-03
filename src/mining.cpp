@@ -25,8 +25,10 @@
 //10 Jobs per second
 // #define NONCE_PER_JOB_SW 4096
 // #define NONCE_PER_JOB_HW 16*1024
-#define NONCE_PER_JOB_SW 8192
-#define NONCE_PER_JOB_HW 32*1024
+// #define NONCE_PER_JOB_SW 8192   // Previous value
+// #define NONCE_PER_JOB_HW 32*1024 // Previous value
+#define NONCE_PER_JOB_SW 16384   // Doubled for better throughput
+#define NONCE_PER_JOB_HW 64*1024  // Doubled for better throughput
 
 //#define I2C_SLAVE
 
@@ -597,7 +599,7 @@ void runStratumWorker(void *name) {
     #ifdef I2C_SLAVE
     if (i2c_slave_vector.empty() || job_pool == 0xFFFFFFFF)
     {
-      vTaskDelay(50 / portTICK_PERIOD_MS); //Small delay
+      vTaskDelay(20 / portTICK_PERIOD_MS); //Reduced delay for better job distribution
     } else
     {
       uint32_t time_start = millis();
@@ -632,7 +634,7 @@ void runStratumWorker(void *name) {
         vTaskDelay(40 / portTICK_PERIOD_MS);
     }
     #else
-    vTaskDelay(50 / portTICK_PERIOD_MS); //Small delay
+    vTaskDelay(20 / portTICK_PERIOD_MS); //Reduced delay for better job distribution
     #endif
 
 
@@ -1338,7 +1340,7 @@ void minerWorkerHw(void * task_id)
 #endif  //HARDWARE_SHA265
 
 
-#define DELAY 1000  // Reduced from 500ms to 1000ms (2Hz -> 1Hz) to save CPU cycles
+#define DELAY 2000  // Reduced from 1000ms to 2000ms (1Hz -> 0.5Hz) to save CPU cycles for mining
 #define REDRAW_EVERY 10
 
 void restoreStat() {
