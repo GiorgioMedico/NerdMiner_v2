@@ -105,7 +105,7 @@ void esp32_2432S028R_Init(void)
   pinMode(LED_PIN, OUTPUT);
   pinMode(LED_PIN_B, OUTPUT);
   pinMode(LED_PIN_G, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
+  digitalWrite(LED_PIN, HIGH);
   digitalWrite(LED_PIN_B, HIGH);
   digitalWrite(LED_PIN_G, HIGH);
   pData.bestDifficulty = "0";
@@ -584,6 +584,8 @@ void esp32_2432S028R_DoLedStuff(unsigned long frame)
     currentScreen = currentDisplayDriver->current_cyclic_screen;
 #endif
 
+  // RGB LED disabled - keep all LEDs off
+  /*
   NMState status = mMonitor.NerdStatus.load(std::memory_order_acquire);
   switch (status)
   {
@@ -607,10 +609,11 @@ void esp32_2432S028R_DoLedStuff(unsigned long frame)
       // DEBUG_SERIAL_PRINT("h");
       previousMillis = currentMillis;
       digitalWrite(LED_PIN_B, HIGH);
-      digitalWrite(LED_PIN, !digitalRead(LED_PIN)); // Cambia el estado del LED      
+      digitalWrite(LED_PIN, !digitalRead(LED_PIN)); // Cambia el estado del LED
     }
     break;
   }
+  */
   
 
 }
