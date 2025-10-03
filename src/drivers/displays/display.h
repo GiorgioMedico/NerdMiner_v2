@@ -8,7 +8,7 @@ extern DisplayDriver *currentDisplayDriver;
 void initDisplay();
 void alternateScreenState();
 void alternateScreenRotation();
-void switchToNextScreen();
+void switchToNextScreen();  // Deprecated: Does nothing when num_cyclic_screens == 1
 void resetToFirstScreen();
 void drawLoadingScreen();
 void drawSetupScreen();

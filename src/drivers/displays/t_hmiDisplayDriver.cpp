@@ -130,33 +130,6 @@ void printPoolData()
 }
 
 
-void printMemPoolFees(unsigned long mElapsed)
-{
-  // DEBUG_SERIAL_PRINT("\nFees ============ Free Heap:");
-  // DEBUG_SERIAL_PRINTLN(ESP.getFreeHeap()); 
-
-  coin_data data = getCoinData(mElapsed);
-
-  render.setFontSize(18);
-  background.pushImage(0, 170, 320, 70, bottomMemPoolFees);
-  if (showbtcprice)
-  {
-    // XXX -- remove when bitmap is done
-    background.fillRect( 105, 170,  110, 20, TFT_BLACK);
-    
-    String st = data.btcPrice;
-    if (st.length()) st.remove(st.length()-1);
-    render.drawString(st.c_str(),  125, 170,  TFT_WHITE);
-  }
-  render.drawString(data.economyFee.c_str(), 140, 170+38, TFT_BLACK);
-
-  render.setFontSize(18);
-  // XXX - less than sign in DigitalNumbers
-  // render.drawChar('<', 245, 170+32, TFT_RED);
-  render.drawString(data.minimumFee.c_str(), 250, 170+32, TFT_RED);
-  render.drawString(data.fastestFee.c_str(), 30, 170+32, TFT_BLACK);
-  // printBatteryVoltage();
-}
 
 void t_hmiDisplay_MinerScreen(unsigned long mElapsed)
 {
@@ -202,168 +175,12 @@ void t_hmiDisplay_MinerScreen(unsigned long mElapsed)
   render.setFontSize(10);
   render.rdrawString(data.currentTime.c_str(), 286, 1, TFT_BLACK);
 
-  if (lowerScreen == 1)
-    printPoolData();
-  else
-    printMemPoolFees(mElapsed);
+  printPoolData();
 
   // Push prepared background to screen
   background.pushSprite(0, 0);
 }
 
-void t_hmiDisplay_ClockScreen(unsigned long mElapsed)
-{
-  if (digitalRead(TFT_BL)) return;
-
-  clock_data data = getClockData(mElapsed);
-
-  // Print background screen
-  background.pushImage(0, 0, minerClockWidth, 170 /*minerClockHeight*/, minerClockScreen);
-
-  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
-                data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
-
-  // Hashrate
-  render.setFontSize(25);
-  render.setCursor(19, 122);
-  render.setFontColor(TFT_BLACK);
-  render.rdrawString(data.currentHashRate.c_str(), 94, 129, TFT_BLACK);
-
-  // Print BTC Price
-  background.setFreeFont(FSSB9);
-  background.setTextSize(1);
-  background.setTextDatum(TL_DATUM);
-  background.setTextColor(TFT_BLACK);
-  background.drawString(data.btcPrice.c_str(), 202, 3, GFXFF);
-
-  // Print BlockHeight
-  render.setFontSize(18);
-  render.rdrawString(data.blockHeight.c_str(), 254, 140, TFT_BLACK);
-
-  // Print Hour
-  background.setFreeFont(FF23);
-  background.setTextSize(2);
-  background.setTextColor(0xDEDB, TFT_BLACK);
-
-  background.drawString(data.currentTime.c_str(), 130, 50, GFXFF);
-  if (lowerScreen == 1)
-    printMemPoolFees(mElapsed);
-  else
-    printPoolData();
-  // Push prepared background to screen
-  background.pushSprite(0, 0);
-}
-
-void t_hmiDisplay_GlobalHashScreen(unsigned long mElapsed)
-{
-  if (digitalRead(TFT_BL)) return;
-
-  coin_data data = getCoinData(mElapsed);
-
-  // Print background screen
-  background.pushImage(0, 0, globalHashWidth, 170 /* globalHashHeight */, globalHashScreen);
-
-  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
-                data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
-
-  // Print BTC Price
-  background.setFreeFont(FSSB9);
-  background.setTextSize(1);
-  background.setTextDatum(TL_DATUM);
-  background.setTextColor(TFT_BLACK);
-  background.drawString(data.btcPrice.c_str(), 198, 3, GFXFF);
-
-  // Print Hour
-  background.setFreeFont(FSSB9);
-  background.setTextSize(1);
-  background.setTextDatum(TL_DATUM);
-  background.setTextColor(TFT_BLACK);
-  background.drawString(data.currentTime.c_str(), 268, 3, GFXFF);
-
-  // Print Last Pool Block
-  background.setFreeFont(FSS9);
-  background.setTextDatum(TR_DATUM);
-  background.setTextColor(0x9C92);
-  background.drawString(data.halfHourFee.c_str(), 302, 52, GFXFF);
-
-  // Print Difficulty
-  background.setFreeFont(FSS9);
-  background.setTextDatum(TR_DATUM);
-  background.setTextColor(0x9C92);
-  background.drawString(data.networkDifficulty.c_str(), 302, 88, GFXFF);
-
-  // Print Global Hashrate
-  render.setFontSize(17);
-  render.rdrawString(data.globalHashRate.c_str(), 274, 145, TFT_BLACK);
-
-  // Print BlockHeight
-  render.setFontSize(28);
-  render.rdrawString(data.blockHeight.c_str(), 140, 104, 0xDEDB);
-
-  // Draw percentage rectangle
-  int x2 = 2 + (138 * data.progressPercent / 100);
-  background.fillRect(2, 149, x2, 168, 0xDEDB);
-
-  // Print Remaining BLocks
-  background.setTextFont(FONT2);
-  background.setTextSize(1);
-  background.setTextDatum(MC_DATUM);
-  background.setTextColor(TFT_BLACK);
-  background.drawString(data.remainingBlocks.c_str(), 72, 159, FONT2);
-
-  if (lowerScreen == 1)
-    printMemPoolFees(mElapsed);
-  else
-    printPoolData();
-
-  // Push prepared background to screen
-  background.pushSprite(0, 0);
-}
-
-
-void t_hmiDisplay_BTCprice(unsigned long mElapsed)
-{
-  if (digitalRead(TFT_BL)) return;
-
-  clock_data data = getClockData(mElapsed);
-
-  // Print background screen
-  background.pushImage(0, 0, priceScreenWidth, 170 /*priceScreenHeight*/, priceScreen);
-
-  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
-                data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
-
-  // Hashrate
-  render.setFontSize(25);
-  render.setCursor(19, 122);
-  render.setFontColor(TFT_BLACK);
-  render.rdrawString(data.currentHashRate.c_str(), 94, 129, TFT_BLACK);
-
-  // Print BlockHeight
-  render.setFontSize(18);
-  render.rdrawString(data.blockHeight.c_str(), 254, 138, TFT_WHITE);
-
-  // Print Hour
-  
-  background.setFreeFont(FSSB9);
-  background.setTextSize(1);
-  background.setTextDatum(TL_DATUM);
-  background.setTextColor(TFT_BLACK);
-  background.drawString(data.currentTime.c_str(), 222, 3, GFXFF);
-
-  // Print BTC Price 
-  background.setFreeFont(FF24);
-  background.setTextDatum(TR_DATUM);
-  background.setTextSize(1);
-  background.setTextColor(0xDEDB, TFT_BLACK);
-  background.drawString(data.btcPrice.c_str(), 300, 58, GFXFF);
-  if (lowerScreen == 1)
-    printPoolData();
-  else
-    printMemPoolFees(mElapsed);
-  // Push prepared background to screen
-  background.pushSprite(0, 0);
-}
 
 
 void t_hmiDisplay_LoadingScreen(void)
@@ -400,6 +217,7 @@ void t_hmiDisplay_DoLedStuff(unsigned long frame)
 }
 
 // Only Mining Screen enabled - other screens commented out to eliminate HTTP API overhead
+// Removed screens: t_hmiDisplay_ClockScreen, t_hmiDisplay_GlobalHashScreen (code simplification)
 CyclicScreenFunction t_hmiDisplayCyclicScreens[] = {t_hmiDisplay_MinerScreen};
 // Disabled: t_hmiDisplay_ClockScreen, t_hmiDisplay_GlobalHashScreen, t_hmiDisplay_BTCprice
 

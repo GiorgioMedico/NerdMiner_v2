@@ -110,15 +110,15 @@ pio test
 
 ## Button Controls
 
+> **Note**: Multiple screen modes (Clock, Global Hash, BTC Price) have been removed. Only the Mining screen is displayed.
+
 **Single Button Devices**
-- Click: Switch screen
-- Double-click: Rotate display
-- Triple-click: Toggle screen on/off
-- Hold 5s: Reset configuration
+- Click: Toggle screen on/off
+- Hold 2s: Reset configuration
 
 **Dual Button Devices**
-- Button 1: Screen switching, config reset
-- Button 2: Display toggle, rotation
+- Button 1: Toggle screen on/off, Double-click to rotate display
+- Button 2: Reset configuration (hold 5s)
 
 ## Development Notes
 

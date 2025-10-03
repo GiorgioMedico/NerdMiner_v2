@@ -87,6 +87,7 @@ void setup()
 #endif
 
   // Setup the buttons
+  // Note: Screen switching removed - only one screen (MinerScreen) available
   #if defined(PIN_BUTTON_1) && !defined(PIN_BUTTON_2) //One button device
     // button1.setPressMs(5*SECOND_MS);
     // button1.attachClick(switchToNextScreen);
@@ -106,7 +107,7 @@ void setup()
 
   #if defined(PIN_BUTTON_2) //Button 2 of two button device
     button2.setPressMs(5*SECOND_MS);
-    button2.attachClick(switchToNextScreen);
+    // switchToNextScreen removed - single screen mode only
     button2.attachLongPressStart(reset_configuration);
   #endif
 

@@ -86,62 +86,6 @@ void t_qtDisplay_MinerScreen(unsigned long mElapsed)
     background.pushSprite(0,0);
 }
 
-uint16_t osx=64, osy=64, omx=64, omy=64, ohx=64, ohy=64;  // Saved H, M, S x & y coords
-void t_qtDisplay_ClockScreen(unsigned long mElapsed)
-{
-    clock_data_t data = getClockData_t(mElapsed);
-
-    // Print background screen
-    background.pushImage(0, 0, minerClockWidth, minerClockHeight, minerClockScreen);
-
-    // DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
-    //             data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
-
-    render.setCursor(0, 0);
-
-    //Hashrate
-    render.setFontSize(18);
-    render.setFontColor(TFT_BLACK);    
-    render.cdrawString(data.currentHashRate.c_str(), 64, 74, TFT_DARKGREY);
-
-    //Valid Blocks
-    render.setFontSize(15);
-    render.rdrawString(data.valids.c_str(), 96, 54, TFT_BLACK);
-
-    if (data.currentHours > 12)
-        data.currentHours -= 12;
-    float sdeg = data.currentSeconds*6;                  // 0-59 -> 0-354
-    float mdeg = data.currentMinutes*6+sdeg*0.01666667;  // 0-59 -> 0-360 - includes seconds
-    float hdeg = data.currentHours*30+mdeg*0.0833333;  // 0-11 -> 0-360 - includes minutes and seconds
-
-    float hx = cos((hdeg-90)*0.0174532925);    
-    float hy = sin((hdeg-90)*0.0174532925);
-    float mx = cos((mdeg-90)*0.0174532925);    
-    float my = sin((mdeg-90)*0.0174532925);
-    float sx = cos((sdeg-90)*0.0174532925);    
-    float sy = sin((sdeg-90)*0.0174532925);    
-
-    ohx = hx*33+60;    
-    ohy = hy*33+60;
-    omx = mx*44+60;    
-    omy = my*44+60;    
-    // Redraw new hand positions, hour and minute hands not erased here to avoid flicker
-    background.drawLine(ohx, ohy, 65, 65, TFT_BLACK);
-    background.drawLine(omx, omy, 65, 65, TFT_BLACK);
-    osx = sx*47+60;    
-    osy = sy*47+60;
-    background.drawLine(osx, osy, 65, 65, TFT_RED);   
-
-    background.fillCircle(65, 65, 3, TFT_RED);
-
-    //Push prepared background to screen
-    background.pushSprite(0,0);      
-}
-
-void t_qtDisplay_GlobalHashScreen(unsigned long mElapsed)
-{
-
-}
 
 void t_qtDisplay_LoadingScreen(void)
 {
@@ -164,7 +108,8 @@ void t_qtDisplay_DoLedStuff(unsigned long frame)
 {
 }
 
-CyclicScreenFunction t_qtDisplayCyclicScreens[] = {t_qtDisplay_MinerScreen, t_qtDisplay_ClockScreen};
+// Removed screens: t_qtDisplay_ClockScreen, t_qtDisplay_GlobalHashScreen (code simplification)
+CyclicScreenFunction t_qtDisplayCyclicScreens[] = {t_qtDisplay_MinerScreen};
 
 DisplayDriver t_qtDisplayDriver = {
     t_qtDisplay_Init,

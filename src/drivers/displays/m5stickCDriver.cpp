@@ -75,96 +75,6 @@ void m5stickCDriver_MinerScreen(unsigned long mElapsed)
   
 }
 
-void m5stickCDriver_ClockScreen(unsigned long mElapsed)
-{
-  if (screen_state == 0) return;
-
-  mining_data data = getMiningData(mElapsed);
-  clock_data_t curr_clock_data = getClockData_t(mElapsed);
-
-  
-  M5.Lcd.fillScreen(BLACK);
-
-  //Mining Time
-  char timeMining[15]; 
-  unsigned long secElapsed = millis() / 1000;
-  int days = secElapsed / 86400; 
-  int hours = (secElapsed - (days * 86400)) / 3600;                                                        //Number of seconds in an hour
-  int mins = (secElapsed - (days * 86400) - (hours * 3600)) / 60;                                              //Remove the number of hours and calculate the minutes.
-  int secs = secElapsed - (days * 86400) - (hours * 3600) - (mins * 60);   
-  sprintf(timeMining, "%01d  %02d:%02d:%02d", days, hours, mins, secs);
-
-  M5.Lcd.setTextFont(2);
-  M5.Lcd.setTextColor(GRAY,BLACK);
-  M5.Lcd.setCursor(40, 2);
-  M5.Lcd.println("ELAPSED TIME");
-
-  M5.Lcd.setFreeFont(&DSEG7_Classic_Bold_17);
-  M5.Lcd.setTextColor(LIGHTBLUE,BLACK);
-  M5.Lcd.setCursor(24, 42);
-  M5.Lcd.println(String(timeMining));
-
-  M5.Lcd.drawFastHLine(1, 52, 180, ORANGE);
-
-  M5.Lcd.setFreeFont(&DSEG7_Classic_Bold_17);
-  M5.Lcd.setTextColor(LIGHTBLUE,BLACK);
-  M5.Lcd.setCursor(82, 76);
-  M5.Lcd.println(String(data.currentTime));
-
-  M5.Lcd.setTextFont(2);
-  M5.Lcd.setTextColor(GRAY,BLACK);
-  M5.Lcd.setCursor(3, 63);
-  M5.Lcd.println("TIME NOW");
-    
-}
-
-void m5stickCDriver_GlobalHashScreen(unsigned long mElapsed)
-{
-  if (screen_state == 0) return;
-
-  coin_data data = getCoinData(mElapsed);
-
-  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
-                data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
-
-  M5.Lcd.fillScreen(BLACK);
-
-  M5.Lcd.setTextFont(2);
-  M5.Lcd.setCursor(118, 1);
-  M5.Lcd.setTextColor(GREEN,BLACK);
-  M5.Lcd.print("STATS");
-
-  M5.Lcd.setCursor(5, 1);
-  M5.Lcd.setTextColor(ORANGE,BLACK);
-  M5.Lcd.print("BTC    ");
-  M5.Lcd.setTextColor(GRAY,BLACK);
-  M5.Lcd.print(data.btcPrice.c_str());
-
-  M5.Lcd.setCursor(5, 17);
-  M5.Lcd.setTextColor(LIGHTBLUE,BLACK);
-  M5.Lcd.print("Fee    ");
-  M5.Lcd.setTextColor(GRAY,BLACK);
-  M5.Lcd.print(data.halfHourFee.c_str());
-
-  M5.Lcd.setCursor(5, 33);
-  M5.Lcd.setTextColor(ORANGE,BLACK);
-  M5.Lcd.print("Diff    ");
-  M5.Lcd.setTextColor(GRAY,BLACK);
-  M5.Lcd.print(data.networkDifficulty.c_str());
-
-  M5.Lcd.setCursor(5, 49);
-  M5.Lcd.setTextColor(LIGHTBLUE,BLACK);
-  M5.Lcd.print("GHash  ");
-  M5.Lcd.setTextColor(GRAY,BLACK);
-  M5.Lcd.print(data.globalHashRate.c_str());
-
-  M5.Lcd.setCursor(5, 65);
-  M5.Lcd.setTextColor(ORANGE,BLACK);
-  M5.Lcd.print("Height  ");
-  M5.Lcd.setTextColor(GRAY,BLACK);
-  M5.Lcd.print(data.blockHeight.c_str());
-
-}
 
 void m5stickCDriver_LoadingScreen(void)
 {
@@ -190,6 +100,7 @@ void m5stickCDriver_DoLedStuff(unsigned long frame)
 }
 
 // Only Mining Screen enabled - other screens commented out to eliminate HTTP API overhead
+// Removed screens: m5stickCDriver_ClockScreen, m5stickCDriver_GlobalHashScreen (code simplification)
 CyclicScreenFunction m5stickCDriverCyclicScreens[] = {m5stickCDriver_MinerScreen};
 // Disabled: m5stickCDriver_ClockScreen, m5stickCDriver_GlobalHashScreen
 

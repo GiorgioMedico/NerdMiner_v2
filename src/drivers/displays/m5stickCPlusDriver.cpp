@@ -112,139 +112,6 @@ void m5stickCPlusDriver_MinerScreen(unsigned long mElapsed)
   background.pushSprite(0, 0);
 }
 
-void m5stickCPlusDriver_ClockScreen(unsigned long mElapsed)
-{
-  if (screen_state == 0) return;
-
-  clock_data data = getClockData(mElapsed);
-
-  // Print background screen
-  background.pushImage(0, 0, minerClockWidth, minerClockHeight, minerClockScreen);
-
-  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
-                data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
-
-  // Hashrate
-  render.setFontSize(20);
-  render.setCursor(19, 122);
-  render.setFontColor(TFT_BLACK);
-  render.rdrawString(data.currentHashRate.c_str(), 70, 103, TFT_BLACK);
-
-  // Print BTC Price
-  background.setFreeFont(FSSB9);
-  background.setTextSize(1);
-  background.setTextDatum(TL_DATUM);
-  background.setTextColor(TFT_BLACK);
-  background.drawString(data.btcPrice.c_str(), 148, 1, GFXFF);
-
-  // Print BlockHeight
-  render.setFontSize(14);
-  render.rdrawString(data.blockHeight.c_str(), 190, 110, TFT_BLACK);
-
-  // Print Hour
-  background.setFreeFont(FF22);
-  background.setTextSize(2);
-  background.setTextColor(TFT_WHITE, TFT_BLACK);
-
-  background.drawString(data.currentTime.c_str(), 100, 40, GFXFF);
-
-  // Push prepared background to screen
-  background.pushSprite(0, 0);
-}
-
-void m5stickCPlusDriver_GlobalHashScreen(unsigned long mElapsed)
-{
-  if (screen_state == 0) return;
-
-  coin_data data = getCoinData(mElapsed);
-
-  // Print background screen
-  background.pushImage(0, 0, globalHashWidth, globalHashHeight, globalHashScreen);
-
-  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
-                data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
-
-  // Print BTC Price
-  background.setFreeFont(FSSB9);
-  background.setTextSize(1);
-  background.setTextDatum(TL_DATUM);
-  background.setTextColor(TFT_BLACK);
-  background.drawString(data.btcPrice.c_str(), 148, 1, GFXFF);
-
-  // Print Last Pool Block
-  background.setFreeFont(FSS9);
-  background.setTextDatum(TR_DATUM);
-  background.setTextColor(TFT_WHITE);
-  background.drawString(data.halfHourFee.c_str(), 230, 40, GFXFF);
-
-  // Print Difficulty
-  background.setFreeFont(FSS9);
-  background.setTextDatum(TR_DATUM);
-  background.setTextColor(TFT_WHITE);
-  background.drawString(data.networkDifficulty.c_str(), 230, 68, GFXFF);
-
-  // Print Global Hashrate
-  render.setFontSize(12);
-  render.rdrawString(data.globalHashRate.c_str(), 205, 115, TFT_BLACK);
-
-  // Print BlockHeight
-  render.setFontSize(23);
-  render.rdrawString(data.blockHeight.c_str(), 105, 80, TFT_WHITE);
-
-  // Draw percentage rectangle
-  int x2 = 2 + (138 * data.progressPercent / 100);
-  background.fillRect(2, 149, x2, 168, 0xDEDB);
-
-  // Print Remaining BLocks
-  background.setTextFont(FONT2);
-  background.setTextSize(1);
-  background.setTextDatum(MC_DATUM);
-  background.setTextColor(TFT_BLACK);
-  background.drawString(data.remainingBlocks.c_str(), 55, 125, FONT2);
-
-  // Push prepared background to screen
-  background.pushSprite(0, 0);
-}
-
-void tDisplay_BTCprice(unsigned long mElapsed)
-{
-  if (screen_state == 0) return;
-
-  clock_data data = getClockData(mElapsed);
-
-  // Print background screen
-  background.pushImage(0, 0, priceScreenWidth, priceScreenHeight, priceScreen);
-
-  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
-                data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
-
-  // Hashrate
-  render.setFontSize(22);
-  render.setCursor(19, 122);
-  render.setFontColor(TFT_BLACK);
-  render.rdrawString(data.currentHashRate.c_str(), 75, 90, TFT_BLACK);
-
-  // Print BlockHeight
-  render.setFontSize(16);
-  render.rdrawString(data.blockHeight.c_str(), 190, 100, TFT_WHITE);
-
-  // Print Hour
-  background.setFreeFont(FSSB9);
-  background.setTextSize(1);
-  background.setTextDatum(TL_DATUM);
-  background.setTextColor(TFT_BLACK);
-  background.drawString(data.currentTime.c_str(), 148, 1, GFXFF);
-
-  // Print BTC Price 
-  background.setFreeFont(FF18);
-  background.setTextDatum(TR_DATUM);
-  background.setTextSize(2);
-  background.setTextColor(TFT_WHITE);
-  background.drawString(data.btcPrice.c_str(), 230, 40, GFXFF);
-
-  // Push prepared background to screen
-  background.pushSprite(0, 0);
-}
 
 void m5stickCPlusDriver_LoadingScreen(void)
 {
@@ -270,6 +137,7 @@ void m5stickCPlusDriver_DoLedStuff(unsigned long frame)
 }
 
 // Only Mining Screen enabled - other screens commented out to eliminate HTTP API overhead
+// Removed screens: m5stickCPlusDriver_ClockScreen, m5stickCPlusDriver_GlobalHashScreen, tDisplay_BTCprice (code simplification)
 CyclicScreenFunction m5stickCPlusDriverCyclicScreens[] = {m5stickCPlusDriver_MinerScreen};
 // Disabled: m5stickCPlusDriver_ClockScreen, m5stickCPlusDriver_GlobalHashScreen, tDisplay_BTCprice
 

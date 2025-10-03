@@ -102,6 +102,8 @@ void resetToFirstScreen()
 }
 
 // Switches to the next cyclic screen without drawing it
+// Note: With single-screen mode (num_cyclic_screens == 1), this does nothing
+// Kept for compatibility with T-HMI driver's toggleBottomScreen feature
 void switchToNextScreen()
 {
   currentDisplayDriver->current_cyclic_screen = (currentDisplayDriver->current_cyclic_screen + 1) % currentDisplayDriver->num_cyclic_screens;

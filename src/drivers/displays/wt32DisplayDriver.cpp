@@ -324,14 +324,6 @@ void wt32Display_NoScreen(unsigned long mElapsed)
 
   if(millis() - ulTime > 1000 * 60) {
     ulTime = millis();
-  
-    coin_data cdata = getCoinData(mElapsed);
-
-    lv_label_set_text(ui_lblPrice, cdata.btcPrice.c_str());
-    lv_label_set_text(ui_lblGlobalHashrate, cdata.globalHashRate.c_str());
-    lv_label_set_text(ui_lblDifficulty, cdata.networkDifficulty.c_str());
-    lv_bar_set_value(ui_barhalving, cdata.progressPercent, LV_ANIM_ON);
-    lv_label_set_text(ui_lblHeight2, cdata.blockHeight.c_str());
 
     pool_data pdata = getPoolData();
 

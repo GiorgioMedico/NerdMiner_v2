@@ -228,6 +228,7 @@ void dongleDisplay_DoLedStuff(unsigned long frame)
 #endif
 }
 
+// Removed screens: dongleDisplay_ClockScreen, dongleDisplay_GlobalHashScreen (code simplification)
 CyclicScreenFunction dongleDisplayCyclicScreens[] = {dongleDisplay_MinerScreen};
 
 DisplayDriver dongleDisplayDriver = {

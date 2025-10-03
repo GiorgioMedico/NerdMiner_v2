@@ -116,105 +116,6 @@ void amoledDisplay_MinerScreen(unsigned long mElapsed)
   lcd_PushColors(0, 0, WIDTH, HEIGHT, (uint16_t *)background.getPointer());
 }
 
-void amoledDisplay_ClockScreen(unsigned long mElapsed)
-{
-  if (screen_state == 0) return;
-
-  clock_data data = getClockData(mElapsed);
-
-  // Print background screen
-  background.pushImage(0, 0, minerClockWidth, minerClockHeight, minerClockScreen);
-
-  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
-                data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
-
-  // Hashrate
-  render.setFontSize(FS(25));
-  render.setFontColor(TFT_BLACK);
-  render.rdrawString(data.currentHashRate.c_str(), X(94), Y(129), TFT_BLACK);
-
-  // Print BTC Price
-  background.setFreeFont(FSSB12);
-  background.setTextSize(1);
-  background.setTextDatum(TL_DATUM);
-  background.setTextColor(TFT_BLACK);
-  background.drawString(data.btcPrice.c_str(), X(202), Y(3), GFXFF);
-
-  // Print BlockHeight
-  render.setFontSize(FS(18));
-  render.rdrawString(data.blockHeight.c_str(), X(254), Y(140), TFT_BLACK);
-
-  // Print Hour
-  background.setFreeFont(FF24);
-  background.setTextSize(2);
-  background.setTextColor(0xDEDB, TFT_BLACK);
-
-  background.drawString(data.currentTime.c_str(), X(130), Y(50), GFXFF);
-
-  // Push prepared background to screen
-  lcd_PushColors(0, 0, WIDTH, HEIGHT, (uint16_t *)background.getPointer());
-}
-
-void amoledDisplay_GlobalHashScreen(unsigned long mElapsed)
-{
-  if (screen_state == 0) return;
-
-  coin_data data = getCoinData(mElapsed);
-
-  // Print background screen
-  background.pushImage(0, 0, globalHashWidth, globalHashHeight, globalHashScreen);
-
-  DEBUG_SERIAL_PRINTF(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
-                data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
-
-  // Print BTC Price
-  background.setFreeFont(FSSB12);
-  background.setTextSize(1);
-  background.setTextDatum(TL_DATUM);
-  background.setTextColor(TFT_BLACK);
-  background.drawString(data.btcPrice.c_str(), X(198), Y(3), GFXFF);
-
-  // Print Hour
-  background.setFreeFont(FSSB12);
-  background.setTextSize(1);
-  background.setTextDatum(TL_DATUM);
-  background.setTextColor(TFT_BLACK);
-  background.drawString(data.currentTime.c_str(), X(268), Y(3), GFXFF);
-
-  // Print Last Pool Block
-  background.setFreeFont(FSS12);
-  background.setTextDatum(TR_DATUM);
-  background.setTextColor(0x9C92);
-  background.drawString(data.halfHourFee.c_str(), X(302), Y(52), GFXFF);
-
-  // Print Difficulty
-  background.setFreeFont(FSS12);
-  background.setTextDatum(TR_DATUM);
-  background.setTextColor(0x9C92);
-  background.drawString(data.networkDifficulty.c_str(), X(302), Y(88), GFXFF);
-
-  // Print Global Hashrate
-  render.setFontSize(FS(17));
-  render.rdrawString(data.globalHashRate.c_str(), X(274), Y(145), TFT_BLACK);
-
-  // Print BlockHeight
-  render.setFontSize(FS(28));
-  render.rdrawString(data.blockHeight.c_str(), X(140), Y(104), 0xDEDB);
-
-  // Draw percentage rectangle
-  int x2 = 2 + (138 * data.progressPercent / 100);
-  background.fillRect(2, Y(149), X(x2), Y(238), 0xDEDB);
-
-  // Print Remaining BLocks
-  background.setTextFont(FONT4);
-  background.setTextSize(1);
-  background.setTextDatum(MC_DATUM);
-  background.setTextColor(TFT_BLACK);
-  background.drawString(data.remainingBlocks.c_str(), X(72), Y(159), FONT2);
-
-  // Push prepared background to screen
-  lcd_PushColors(0, 0, WIDTH, HEIGHT, (uint16_t *)background.getPointer());
-}
 
 void amoledDisplay_LoadingScreen(void)
 {
@@ -242,6 +143,7 @@ void amoledDisplay_DoLedStuff(unsigned long frame)
 }
 
 // Only Mining Screen enabled - other screens commented out to eliminate HTTP API overhead
+// Removed screens: amoledDisplay_ClockScreen, amoledDisplay_GlobalHashScreen (code simplification)
 CyclicScreenFunction amoledDisplayCyclicScreens[] = {amoledDisplay_MinerScreen};
 // Disabled: amoledDisplay_ClockScreen, amoledDisplay_GlobalHashScreen
 
