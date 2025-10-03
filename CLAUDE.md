@@ -12,15 +12,14 @@ This project uses PlatformIO as the build system:
 
 ```bash
 # Build for specific board (see platformio.ini for all 40+ environments)
-pio run -e NerdminerV2
-pio run -e M5Stick-C-Plus2
-pio run -e ESP32-devKitv1
+pio run -e ESP32-2432S028R
+
 
 # Build all default environments (will take significant time)
 pio run
 
 # Upload to device
-pio run -e NerdminerV2 -t upload
+pio run -e ESP32-2432S028R -t upload
 
 # Monitor serial output
 pio device monitor -p /dev/ttyUSB0 -b 115200
@@ -126,8 +125,43 @@ pio test
 **Task Priority System**
 - Monitor task: Priority 5 (highest)
 - Stratum task: Priority 4
-- Miner tasks: Priority 1-3
-- Main loop: Priority 4
+- Miner HW tasks: Priority 3
+- Miner SW tasks: Priority 2
+- Main loop: Priority 2
+
+**Task Stack Sizes (Board-Specific)**
+- Monitor: 9500 bytes (ESP32 classic) / 10000 bytes (others)
+- Stratum: 12000 bytes (ESP32 classic) / 13500 bytes (ESP32-2432S028R) / 15000 bytes (others)
+- Miner HW: 3584 bytes (ESP32 classic) / 4096 bytes (others)
+- Miner SW: 5000 bytes (ESP32 classic) / 6000 bytes (others)
+
+**Thread Safety & Synchronization**
+- Mutexes: `s_id_mutex` (stratum ID counter), `best_diff_mutex` (difficulty tracking)
+- Atomic variables: `hashes`, `Mhashes`, `shares`, `valids`, `templates`, `upTime`, `s_client_connected`
+- Job queue system: `JOB_QUEUE_SIZE=8`, `RESULT_LIST_SIZE=16`, `SUBMISSION_MAP_MAX=16`
+
+**Nonce Distribution Strategy**
+- Hardware mining: `NONCE_PER_JOB_HW=64K` nonces per job
+- Software mining: `NONCE_PER_JOB_SW=16K` nonces per job
+- Random nonce masking: `0xFFFFC000` for 16KB alignment
+- Start values: `NONCE_START_RANDOM=0xDA54E700`, `NONCE_START_I2C_SLAVE=0x10000000`
+
+**Watchdog Configuration**
+- General WDT: 3 seconds (`WDT_TIMEOUT`)
+- Miner WDT: 900 seconds / 15 minutes (`WDT_MINER_TIMEOUT`)
+- SHA hardware timeout: 50000 cycles (`SHA_HARDWARE_TIMEOUT_CYCLES`)
+- Core 0 WDT: Disabled (full CPU utilization for mining)
+
+**Statistics Persistence (NVS)**
+- Progressive save intervals: 5min → 15min → 30min → 1hr → 3hr → 6hr → 12hr
+- Tracks total hashes, shares, uptime, best difficulty across reboots
+- Uses ESP32 Non-Volatile Storage (NVS) API
+
+**Build Flags**
+- Optimization: `-O3`, `-ffast-math`, `-funroll-loops`
+- Memory optimization: `-ffunction-sections`, `-fdata-sections`, `-fomit-frame-pointer`, `-Wl,--gc-sections`
+- Critical defines: `HARDWARE_SHA265` (SHA256 acceleration), `DEBUG_MINING` (debug output)
+- Board-specific: `NERDMINERV2`, `M5STICK_C`, `ESP32_2432S028R`, etc.
 
 **Build Scripts**
 - `auto_firmware_version.py`: Git-based version tagging
@@ -136,7 +170,16 @@ pio test
 **Key Constants**
 - `MAX_NONCE_STEP`: 5M nonce range per mining iteration
 - `KEEPALIVE_TIME_ms`: 30s pool connection maintenance
-- `WDT_MINER_TIMEOUT`: 15min watchdog for mining tasks
+- `POOLINACTIVITY_TIME_ms`: 60s pool inactivity timeout
+- `MAX_POOL_LINE_SIZE`: 4096 bytes for network safety
+
+**External API Endpoints**
+- BTC price: `api.coingecko.com/api/v3/simple/price` (updates every 1 min)
+- Block height: `mempool.space/api/blocks/tip/height` (every 2 min)
+- Global hashrate: `mempool.space/api/v1/mining/hashrate/3d` (every 2 min)
+- Difficulty adjustment: `mempool.space/api/v1/difficulty-adjustment` (every 2 min)
+- Fee estimates: `mempool.space/api/v1/fees/recommended` (every 2 min)
+- Pool statistics: `public-pool.io:40557/api/client/{btc_address}` (every 1 min)
 
 ## Pool Compatibility
 
