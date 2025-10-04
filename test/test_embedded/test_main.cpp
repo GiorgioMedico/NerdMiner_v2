@@ -249,7 +249,7 @@ void test_stratum_get_next_id() {
     Serial.println("\n=== Testing Stratum ID Generation ===");
 
     // Test normal increment
-    unsigned long test_id = 1;
+    std::atomic<unsigned long> test_id(1);
     unsigned long next_id = getNextId(test_id);
     TEST_ASSERT_EQUAL_UINT32(2, next_id);
 

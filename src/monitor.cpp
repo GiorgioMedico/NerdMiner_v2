@@ -24,8 +24,7 @@ extern std::atomic<uint64_t> upTime;
 extern std::atomic<uint32_t> shares; // increase if blockhash has 32 bits of zeroes
 extern std::atomic<uint32_t> valids; // increased if blockhash <= targethalfshares
 
-extern double best_diff; // track best diff
-extern std::mutex best_diff_mutex; // mutex for best_diff
+extern std::atomic<float> best_diff; // track best diff (lock-free)
 
 extern monitor_data mMonitor;
 
@@ -193,10 +192,7 @@ mining_data getMiningData(unsigned long mElapsed)
 
   // bestDiff - use temp buffer for suffix_string (read with mutex)
   char bestDiffBuf[16];
-  {
-    std::lock_guard<std::mutex> diff_lock(best_diff_mutex);
-    suffix_string(best_diff, bestDiffBuf, sizeof(bestDiffBuf), 0);
-  }
+  suffix_string(best_diff.load(std::memory_order_relaxed), bestDiffBuf, sizeof(bestDiffBuf), 0);
   data.bestDiff = bestDiffBuf;
 
   // timeMining - format uptime

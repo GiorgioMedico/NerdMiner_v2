@@ -62,9 +62,8 @@ std::atomic<uint64_t> upTime{0};
 std::atomic<uint32_t> shares{0}; // increase if blockhash has 32 bits of zeroes
 std::atomic<uint32_t> valids{0}; // increased if blockhash <= target
 
-// Track best diff (using mutex for thread safety since std::atomic<double> not always available)
-double best_diff = 0.0;
-std::mutex best_diff_mutex;
+// Track best diff using lock-free atomic float
+std::atomic<float> best_diff(0.0f);
 
 // Track SHA hardware timeout events for diagnostics
 std::atomic<uint32_t> sha_timeout_count{0};
@@ -563,10 +562,10 @@ void runStratumWorker(void *name) {
                                         auto itt = s_submission_map.find(id);
                                         if (itt != s_submission_map.end())
                                         {
-                                          {
-                                            std::lock_guard<std::mutex> diff_lock(best_diff_mutex);
-                                            if (itt->second->diff > best_diff)
-                                              best_diff = itt->second->diff;
+                                          // Update best_diff if new difficulty is higher (single writer, safe without CAS)
+                                          float current = best_diff.load(std::memory_order_relaxed);
+                                          if (itt->second->diff > current) {
+                                            best_diff.store(itt->second->diff, std::memory_order_relaxed);
                                           }
                                           if (itt->second->is32bit)
                                             shares.fetch_add(1, std::memory_order_relaxed);
@@ -1354,13 +1353,13 @@ void restoreStat() {
   ret = nvs_open("state", NVS_READWRITE, &stat_handle);
 
   // Initialize all variables to prevent using garbage data if nvs_get_* fails
-  double local_best_diff = 0.0;
+  float local_best_diff = 0.0f;
   uint32_t nv_Mhashes = 0, nv_templates = 0;
   uint64_t nv_upTime = 0;
   uint32_t nv_shares = 0, nv_valids = 0;
 
   // Read all values and check for errors
-  size_t required_size = sizeof(double);
+  size_t required_size = sizeof(float);
   esp_err_t err_diff = nvs_get_blob(stat_handle, "best_diff", &local_best_diff, &required_size);
   esp_err_t err_mhashes = nvs_get_u32(stat_handle, "Mhashes", &nv_Mhashes);
   esp_err_t err_shares = nvs_get_u32(stat_handle, "shares", &nv_shares);
@@ -1387,26 +1386,22 @@ void restoreStat() {
   if (!all_reads_ok || crc_err != ESP_OK || nv_crc != crc)
   {
     DEBUG_SERIAL_PRINTF("[MONITOR] CRC validation failed (err=%d), resetting stats\n", crc_err);
-    {
-      std::lock_guard<std::mutex> diff_lock(best_diff_mutex);
-      best_diff = 0.0;
-    }
-    Mhashes.store(0, std::memory_order_release);
-    shares.store(0, std::memory_order_release);
-    valids.store(0, std::memory_order_release);
-    templates.store(0, std::memory_order_release);
-    upTime.store(0, std::memory_order_release);
+    best_diff.store(0.0f, std::memory_order_relaxed);
+    Mhashes.store(0, std::memory_order_relaxed);
+    shares.store(0, std::memory_order_relaxed);
+    valids.store(0, std::memory_order_relaxed);
+    templates.store(0, std::memory_order_relaxed);
+    upTime.store(0, std::memory_order_relaxed);
   }
   else
   {
     // CRC valid, apply loaded values to atomics and best_diff
-    std::lock_guard<std::mutex> diff_lock(best_diff_mutex);
-    best_diff = local_best_diff;
-    Mhashes.store(nv_Mhashes, std::memory_order_release);
-    shares.store(nv_shares, std::memory_order_release);
-    valids.store(nv_valids, std::memory_order_release);
-    templates.store(nv_templates, std::memory_order_release);
-    upTime.store(nv_upTime, std::memory_order_release);
+    best_diff.store(local_best_diff, std::memory_order_relaxed);
+    Mhashes.store(nv_Mhashes, std::memory_order_relaxed);
+    shares.store(nv_shares, std::memory_order_relaxed);
+    valids.store(nv_valids, std::memory_order_relaxed);
+    templates.store(nv_templates, std::memory_order_relaxed);
+    upTime.store(nv_upTime, std::memory_order_relaxed);
   }
 }
 
@@ -1414,18 +1409,14 @@ void saveStat() {
   if(!Settings.saveStats) return;
   DEBUG_SERIAL_PRINTF("[MONITOR] Saving stats\n");
 
-  double local_best_diff;
-  {
-    std::lock_guard<std::mutex> diff_lock(best_diff_mutex);
-    local_best_diff = best_diff;
-  }
+  float local_best_diff = best_diff.load(std::memory_order_relaxed);
 
   // Load atomic values for saving
-  uint32_t nv_Mhashes = Mhashes.load(std::memory_order_acquire);
-  uint32_t nv_shares = shares.load(std::memory_order_acquire);
-  uint32_t nv_valids = valids.load(std::memory_order_acquire);
-  uint32_t nv_templates = templates.load(std::memory_order_acquire);
-  uint64_t nv_upTime = upTime.load(std::memory_order_acquire);
+  uint32_t nv_Mhashes = Mhashes.load(std::memory_order_relaxed);
+  uint32_t nv_shares = shares.load(std::memory_order_relaxed);
+  uint32_t nv_valids = valids.load(std::memory_order_relaxed);
+  uint32_t nv_templates = templates.load(std::memory_order_relaxed);
+  uint64_t nv_upTime = upTime.load(std::memory_order_relaxed);
 
   esp_err_t err;
   err = nvs_set_blob(stat_handle, "best_diff", &local_best_diff, sizeof(local_best_diff));
@@ -1473,18 +1464,15 @@ void closeStat() {
 
 void resetStat() {
     DEBUG_SERIAL_PRINTF("[MONITOR] Resetting NVS stats\n");
-    templates.store(0, std::memory_order_release);
-    hashes.store(0, std::memory_order_release);
-    Mhashes.store(0, std::memory_order_release);
-    totalKHashes.store(0, std::memory_order_release);
-    elapsedKHs.store(0, std::memory_order_release);
-    upTime.store(0, std::memory_order_release);
-    shares.store(0, std::memory_order_release);
-    valids.store(0, std::memory_order_release);
-    {
-      std::lock_guard<std::mutex> diff_lock(best_diff_mutex);
-      best_diff = 0.0;
-    }
+    templates.store(0, std::memory_order_relaxed);
+    hashes.store(0, std::memory_order_relaxed);
+    Mhashes.store(0, std::memory_order_relaxed);
+    totalKHashes.store(0, std::memory_order_relaxed);
+    elapsedKHs.store(0, std::memory_order_relaxed);
+    upTime.store(0, std::memory_order_relaxed);
+    shares.store(0, std::memory_order_relaxed);
+    valids.store(0, std::memory_order_relaxed);
+    best_diff.store(0.0f, std::memory_order_relaxed);
     saveStat();
 }
 

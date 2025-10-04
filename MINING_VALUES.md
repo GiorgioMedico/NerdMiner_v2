@@ -237,10 +237,10 @@ These are global variables tracked throughout the mining session and persisted t
 - **Significance**: Finding a valid block means successfully mining a Bitcoin block (extremely rare on ESP32).
 
 #### `best_diff`
-- **Type**: `double`
-- **Location**: `src/mining.cpp:64`
+- **Type**: `std::atomic<float>`
+- **Location**: `src/mining.cpp:66`
 - **Description**: Best (highest) difficulty share ever found by this miner.
-- **Thread Safety**: Protected by `best_diff_mutex` for safe updates.
+- **Thread Safety**: Lock-free atomic variable for thread-safe updates using compare-exchange.
 - **Persistence**: Saved to NVS and restored on boot.
 
 #### `templates`

@@ -136,8 +136,7 @@ pio test
 - Miner SW: 5000 bytes (ESP32 classic) / 6000 bytes (others)
 
 **Thread Safety & Synchronization**
-- Mutexes: `s_id_mutex` (stratum ID counter), `best_diff_mutex` (difficulty tracking)
-- Atomic variables: `hashes`, `Mhashes`, `shares`, `valids`, `templates`, `upTime`, `s_client_connected`
+- Atomic variables: `id` (stratum JSON-RPC ID counter), `hashes`, `Mhashes`, `shares`, `valids`, `best_diff`, `templates`, `upTime`, `s_client_connected`, `s_working_current_job_id`
 - Job queue system: `JOB_QUEUE_SIZE=8`, `RESULT_LIST_SIZE=16`, `SUBMISSION_MAP_MAX=16`
 
 **Nonce Distribution Strategy**

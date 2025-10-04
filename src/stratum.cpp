@@ -9,25 +9,17 @@
 #include "lwip/sockets.h"
 #include "utils.h"
 #include "version.h"
-#include <mutex>
+#include <atomic>
 #include "logging.h"
 
 
 
-unsigned long id = 1;
+std::atomic<unsigned long> id(1);
 
-// Thread safety mutex for id counter
-static std::mutex s_id_mutex;
-
-//Get next JSON RPC Id
-unsigned long getNextId(unsigned long& id) 
+// Thread-safe atomic increment (natural wraparound to 0 is acceptable for JSON-RPC ID)
+unsigned long getNextId(std::atomic<unsigned long>& id)
 {
-    std::lock_guard<std::mutex> lock(s_id_mutex);
-    if (id == ULONG_MAX) {
-      id = 1;
-      return id;
-    }
-    return ++id;
+    return id.fetch_add(1, std::memory_order_relaxed);
 }
 
 //Verify Payload doesn't has zero length
@@ -63,8 +55,8 @@ bool tx_mining_subscribe(WiFiClient& client, mining_subscribe& mSubscribe)
     char payload[BUFFER] = {0};
 
     // Subscribe
-    id = 1; //Initialize id messages
-    int written = snprintf(payload, BUFFER, "{\"id\": %u, \"method\": \"mining.subscribe\", \"params\": [\"NerdMinerV2/%s\"]}\n", id, CURRENT_VERSION);
+    id.store(1, std::memory_order_relaxed); //Initialize id messages
+    int written = snprintf(payload, BUFFER, "{\"id\": 1, \"method\": \"mining.subscribe\", \"params\": [\"NerdMinerV2/%s\"]}\n", CURRENT_VERSION);
 
     if (written < 0 || written >= BUFFER) {
         DEBUG_SERIAL_PRINTF("ERROR: Buffer overflow in tx_mining_subscribe\n");
@@ -180,9 +172,9 @@ bool tx_mining_auth(WiFiClient& client, const char * user, const char * pass)
     }
 
     // Authorize
-    getNextId(id);
+    unsigned long msg_id = getNextId(id);
     int written = snprintf(payload, BUFFER, "{\"id\": %lu, \"method\": \"mining.authorize\", \"params\": [\"%s\", \"%s\"]}\n",
-      id, user, pass);
+      msg_id, user, pass);
 
     if (written < 0 || written >= BUFFER) {
         DEBUG_SERIAL_PRINTF("ERROR: Buffer overflow in tx_mining_auth\n");
@@ -426,7 +418,7 @@ bool tx_mining_submit(WiFiClient& client, mining_subscribe mWorker, mining_job m
     }
 
     int written = snprintf(payload, BUFFER, "{\"id\": %lu, \"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"]}\n",
-        id,
+        submit_id,
         mWorker.wName,
         mJob.job_id.c_str(),
         mWorker.extranonce2.c_str(),
@@ -484,8 +476,8 @@ bool tx_suggest_difficulty(WiFiClient& client, double difficulty)
 {
     char payload[BUFFER] = {0};
 
-    getNextId(id);
-    int written = snprintf(payload, BUFFER, "{\"id\": %lu, \"method\": \"mining.suggest_difficulty\", \"params\": [%.10g]}\n", id, difficulty);
+    unsigned long msg_id = getNextId(id);
+    int written = snprintf(payload, BUFFER, "{\"id\": %lu, \"method\": \"mining.suggest_difficulty\", \"params\": [%.10g]}\n", msg_id, difficulty);
 
     if (written < 0 || written >= BUFFER) {
         DEBUG_SERIAL_PRINTF("ERROR: Buffer overflow in tx_suggest_difficulty\n");
@@ -519,6 +511,6 @@ unsigned long parse_extract_id(const String &line)
         return 0;
     }
 
-    unsigned long id = doc["id"];
-    return id;
+    unsigned long extracted_id = doc["id"];
+    return extracted_id;
 }
