@@ -85,31 +85,47 @@ int saveIntervals[7] = {5 * 60, 15 * 60, 30 * 60, 1 * 3600, 3 * 3600, 6 * 3600, 
 int saveIntervalsSize = sizeof(saveIntervals)/sizeof(saveIntervals[0]);
 int currentIntervalIndex = 0;
 
-bool checkPoolConnection(void) {
+bool checkPoolConnection(void)
+{
+  // Fast path: WiFi check
+  if (WiFi.status() != WL_CONNECTED) {
+    s_client_connected.store(false, std::memory_order_release);
+    isMinerSuscribed.store(false, std::memory_order_release);
+    return false;
+  }
 
-  bool connected = client.connected();
-  s_client_connected.store(connected, std::memory_order_release);
-
-  if (connected) {
+  // Fast path: Already connected
+  if (client.connected()) {
+    s_client_connected.store(true, std::memory_order_release);
     return true;
   }
 
+  // Slow path: Disconnected, attempt reconnection
+  s_client_connected.store(false, std::memory_order_release);
   isMinerSuscribed.store(false, std::memory_order_release);
 
-  DEBUG_SERIAL_PRINTLN("Client not connected, trying to connect..."); 
-  
-  //Resolve first time pool DNS and save IP
-  if(serverIP == IPAddress(1,1,1,1)) {
-    WiFi.hostByName(Settings.PoolAddress.c_str(), serverIP);
-    DEBUG_SERIAL_PRINTF("Resolved DNS and save ip (first time) got: %s\n", serverIP.toString());
+  DEBUG_SERIAL_PRINTLN("Client not connected, trying to connect...");
+
+  // DNS resolution with caching (5 min timeout)
+  static bool dns_resolved = false;
+  static uint32_t last_dns_resolve = 0;
+  uint32_t now = millis();
+
+  if (!dns_resolved || (now - last_dns_resolve > 300000)) {
+    if (WiFi.hostByName(Settings.PoolAddress.c_str(), serverIP) != 1) {
+      DEBUG_SERIAL_PRINTLN("DNS resolution failed: " + Settings.PoolAddress);
+      dns_resolved = false;
+      return false;
+    }
+    dns_resolved = true;
+    last_dns_resolve = now;
+    DEBUG_SERIAL_PRINTF("Resolved DNS: %s\n", serverIP.toString().c_str());
   }
 
-  //Try connecting pool IP
+  // Connection attempt (ensure clean socket state)
+  client.stop();
   if (!client.connect(serverIP, Settings.PoolPort)) {
-    DEBUG_SERIAL_PRINTLN("Imposible to connect to : " + Settings.PoolAddress);
-    WiFi.hostByName(Settings.PoolAddress.c_str(), serverIP);
-    DEBUG_SERIAL_PRINTF("Resolved DNS got: %s\n", serverIP.toString());
-    s_client_connected.store(false, std::memory_order_release);
+    DEBUG_SERIAL_PRINTLN("Connection failed: " + Settings.PoolAddress);
     return false;
   }
 
@@ -121,16 +137,10 @@ bool checkPoolConnection(void) {
 //checks if pool is not sending any data to reconnect again.
 //Even connection could be alive, pool could stop sending new job NOTIFY
 unsigned long mStart0Hashrate = 0;
-bool checkPoolInactivity(unsigned int keepAliveTime, unsigned long inactivityTime){
-
-    unsigned long currentKHashes = (Mhashes.load(std::memory_order_relaxed)*1000) + hashes.load(std::memory_order_relaxed)/1000;
-
-    // Handle hash counter wraparound (similar to timestamp wraparound)
-    uint32_t totalKH = totalKHashes.load(std::memory_order_relaxed);
-    if (currentKHashes < totalKH) {
-      totalKHashes.store(currentKHashes, std::memory_order_relaxed);
-    }
-    unsigned long elapsedKHs_local = currentKHashes - totalKH;
+bool checkPoolInactivity(unsigned int keepAliveTime, unsigned long inactivityTime)
+{
+    // Read hashrate calculated by runMonitor (no race condition, no wraparound issues)
+    unsigned long elapsedKHs_local = elapsedKHs.load(std::memory_order_relaxed);
 
     uint32_t time_now = millis();
 
@@ -142,15 +152,12 @@ bool checkPoolInactivity(unsigned int keepAliveTime, unsigned long inactivityTim
     {
       mLastTXtoPool = time_now;
       DEBUG_SERIAL_PRINTLN("  Sending  : KeepAlive suggest_difficulty");
-      //if (client.print("{}\n") == 0) {
       tx_suggest_difficulty(client, DEFAULT_DIFFICULTY);
-      /*if(tx_suggest_difficulty(client, DEFAULT_DIFFICULTY)){
-        DEBUG_SERIAL_PRINTLN("  Sending keepAlive to pool -> Detected client disconnected");
-        return true;
-      }*/
+      DEBUG_SERIAL_PRINTLN("  Sending keepAlive to pool -> Detected client disconnected");
     }
 
-    if(elapsedKHs_local == 0){
+    if(elapsedKHs_local == 0)
+    {
       //Check if hashrate is 0 during inactivityTIme
       if(mStart0Hashrate == 0) mStart0Hashrate  = time_now;
       if((time_now-mStart0Hashrate) > inactivityTime) { mStart0Hashrate=0; return true;}
@@ -245,8 +252,8 @@ static uint32_t RandomGet()
 
 #endif
 
-void runStratumWorker(void *name) {
-
+void runStratumWorker(void *name) 
+{
 // TEST: https://bitcoin.stackexchange.com/questions/22929/full-example-data-for-scrypt-stratum-client
 
   DEBUG_SERIAL_PRINTLN("");
@@ -1274,7 +1281,8 @@ void minerWorkerHw(void * task_id)
 #define DELAY 2000  // Reduced from 1000ms to 2000ms (1Hz -> 0.5Hz) to save CPU cycles for mining
 #define REDRAW_EVERY 10
 
-void restoreStat() {
+void restoreStat() 
+{
   if(!Settings.saveStats) return;
   esp_err_t ret = nvs_flash_init();
   if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -1385,7 +1393,8 @@ void saveStat() {
   if (err != ESP_OK) DEBUG_SERIAL_PRINTF("[MONITOR] Failed to commit NVS: %d\n", err);
 }
 
-void closeStat() {
+void closeStat() 
+{
     if (stat_handle != 0) {
         nvs_commit(stat_handle);
         nvs_close(stat_handle);
@@ -1394,7 +1403,8 @@ void closeStat() {
     }
 }
 
-void resetStat() {
+void resetStat() 
+{
     DEBUG_SERIAL_PRINTF("[MONITOR] Resetting NVS stats\n");
     templates.store(0, std::memory_order_relaxed);
     hashes.store(0, std::memory_order_relaxed);
