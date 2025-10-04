@@ -58,7 +58,6 @@ void setup_monitor(void);
 
 mining_data getMiningData(unsigned long mElapsed);
 pool_data getPoolData(void);
-clock_data_t getClockData_t(unsigned long mElapsed);
 String getPoolAPIUrl(void);
 
 #endif //MONITOR_API_H

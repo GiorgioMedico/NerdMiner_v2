@@ -4,6 +4,7 @@
 #include "HTTPClient.h"
 #include <NTPClient.h>
 #include <WiFiUdp.h>
+#include <cmath>
 #include <list>
 #include <atomic>
 #include <mutex>
@@ -38,7 +39,8 @@ pool_data pData;
 String poolAPIUrl;
 
 
-void setup_monitor(void){
+void setup_monitor(void)
+{
     /******** TIME ZONE SETTING *****/
 
     timeClient.begin();
@@ -62,52 +64,36 @@ unsigned long initialTime = 0;
 unsigned long mPoolUpdate = 0;
 
 void getTime(unsigned long* currentHours, unsigned long* currentMinutes, unsigned long* currentSeconds){
-  
+
   //Check if need an NTP call to check current time
   if((mTriggerUpdate == 0) || (millis() - mTriggerUpdate > UPDATE_PERIOD_h * 60 * 60 * 1000)){ //60 sec. * 60 min * 1000ms
-    if(WiFi.status() == WL_CONNECTED) {
-        if(timeClient.update()) mTriggerUpdate = millis(); //NTP call to get current time
-        initialTime = timeClient.getEpochTime(); // Guarda la hora inicial (en segundos desde 1970)
-        DEBUG_SERIAL_PRINT("TimeClient NTPupdateTime ");
+    if(WiFi.status() == WL_CONNECTED && timeClient.update()) {
+        initialTime = timeClient.getEpochTime(); // Update base time on successful sync
+        mTriggerUpdate = millis();
+        DEBUG_SERIAL_PRINT("TimeClient NTP updated");
     }
   }
 
   unsigned long elapsedTime = (millis() - mTriggerUpdate) / 1000; // Tiempo transcurrido en segundos
-  unsigned long currentTime = initialTime + elapsedTime; // La hora actual
+  unsigned long currentTime = initialTime + elapsedTime; // Current time (timezone handled by timeClient)
 
-  // convierte la hora actual en horas, minutos y segundos
-  *currentHours = currentTime % 86400 / 3600;
-  *currentMinutes = currentTime % 3600 / 60;
-  *currentSeconds = currentTime % 60;
-}
-
-String getDate(){
-  
-  unsigned long elapsedTime = (millis() - mTriggerUpdate) / 1000; // Tiempo transcurrido en segundos
-  unsigned long currentTime = initialTime + elapsedTime; // La hora actual
-
-  // Convierte la hora actual (epoch time) en una estructura tm
-  struct tm *tm = localtime((time_t *)&currentTime);
-
-  int year = tm->tm_year + 1900; // tm_year es el número de años desde 1900
-  int month = tm->tm_mon + 1;    // tm_mon es el mes del año desde 0 (enero) hasta 11 (diciembre)
-  int day = tm->tm_mday;         // tm_mday es el día del mes
-
-  char currentDate[20];
-  sprintf(currentDate, "%02d/%02d/%04d", tm->tm_mday, tm->tm_mon + 1, tm->tm_year + 1900);
-
-  return String(currentDate);
+  // convierte la hora actual en horas, minutos y segundos (optimizado)
+  unsigned long secondsToday = currentTime % 86400;
+  *currentHours = secondsToday / 3600;
+  *currentMinutes = (secondsToday % 3600) / 60;
+  *currentSeconds = secondsToday % 60;
 }
 
 String getTime(void){
-  static char LocalHour[10];  // Static buffer to avoid heap allocation
   unsigned long currentHours, currentMinutes, currentSeconds;
   getTime(&currentHours, &currentMinutes, &currentSeconds);
 
-  sprintf(LocalHour, "%02d:%02d", currentHours, currentMinutes);
+  char timeBuffer[6];  // "HH:MM\0" = 6 chars
+  sprintf(timeBuffer, "%02lu:%02lu", currentHours, currentMinutes);
 
-  return String(LocalHour);
+  return String(timeBuffer);
 }
+
 
 enum EHashRateScale
 {
@@ -166,7 +152,7 @@ String getCurrentHashRate(unsigned long mElapsed)
   }
 
   // Only update string if hashrate changed significantly
-  if (abs(avg_hashrate - s_last_avg_hashrate) > 0.2)
+  if (std::abs(avg_hashrate - s_last_avg_hashrate) > 0.2)
   {
     s_last_avg_hashrate = avg_hashrate;
     switch (s_hashrate_scale)
@@ -230,20 +216,8 @@ mining_data getMiningData(unsigned long mElapsed)
   return data;
 }
 
-
-clock_data_t getClockData_t(unsigned long mElapsed)
+String getPoolAPIUrl(void) 
 {
-  clock_data_t data;
-
-  data.valids = valids.load(std::memory_order_relaxed);
-  data.currentHashRate = getCurrentHashRate(mElapsed);
-  getTime(&data.currentHours, &data.currentMinutes, &data.currentSeconds);
-
-  return data;
-}
-
-
-String getPoolAPIUrl(void) {
     poolAPIUrl = String(getPublicPool);
     if (Settings.PoolAddress == "public-pool.io") {
         poolAPIUrl = "https://public-pool.io:40557/api/client/";
@@ -274,80 +248,75 @@ String getPoolAPIUrl(void) {
     return poolAPIUrl;
 }
 
-pool_data getPoolData(void){
-    //pool_data pData;    
-    if((mPoolUpdate == 0) || (millis() - mPoolUpdate > UPDATE_POOL_min * 60 * 1000)){      
-        if (WiFi.status() != WL_CONNECTED) return pData;            
+pool_data getPoolData(void)
+{
+    //pool_data pData;
+    if((mPoolUpdate == 0) || (millis() - mPoolUpdate > UPDATE_POOL_min * 60 * 1000))
+    {
+        if (WiFi.status() != WL_CONNECTED) return pData;
         //Make first API call to get global hash and current difficulty
         HTTPClient http;
-        http.setTimeout(10000);        
-        try {          
-          String btcWallet = Settings.BtcWallet;
-          // DEBUG_SERIAL_PRINTLN(btcWallet);
-          if (btcWallet.indexOf(".")>0) btcWallet = btcWallet.substring(0,btcWallet.indexOf("."));
-#ifdef SCREEN_WORKERS_ENABLE
-          DEBUG_SERIAL_PRINTLN("Pool API : " + poolAPIUrl+btcWallet);
-          http.begin(poolAPIUrl+btcWallet);
-#else
-          http.begin(String(getPublicPool)+btcWallet);
-#endif
-          int httpCode = http.GET();
-          if (httpCode == HTTP_CODE_OK) {
-              String payload = http.getString();
-              // DEBUG_SERIAL_PRINTLN(payload);
-              StaticJsonDocument<300> filter;
-              filter["bestDifficulty"] = true;
-              filter["workersCount"] = true;
-              filter["workers"][0]["sessionId"] = true;
-              filter["workers"][0]["hashRate"] = true;
-              StaticJsonDocument<2048> doc;
-              deserializeJson(doc, payload, DeserializationOption::Filter(filter));
-              //DEBUG_SERIAL_PRINTLN(serializeJsonPretty(doc, Serial));
-              if (doc.containsKey("workersCount")) pData.workersCount = doc["workersCount"].as<int>();
-              const JsonArray& workers = doc["workers"].as<JsonArray>();
-              float totalhashs = 0;
-              for (const JsonObject& worker : workers) {
-                totalhashs += worker["hashRate"].as<double>();
-                /* DEBUG_SERIAL_PRINT(worker["sessionId"].as<String>()+": ");
-                DEBUG_SERIAL_PRINT(" - "+worker["hashRate"].as<String>()+": ");
-                DEBUG_SERIAL_PRINTLN(totalhashs); */
-              }
-              char totalhashs_s[16] = {0};
-              suffix_string(totalhashs, totalhashs_s, 16, 0);
-              pData.workersHash = String(totalhashs_s);
+        http.setTimeout(10000);
 
-              double temp;
-              if (doc.containsKey("bestDifficulty")) {
-              temp = doc["bestDifficulty"].as<double>();            
-              char best_diff_string[16] = {0};
-              suffix_string(temp, best_diff_string, 16, 0);
-              pData.bestDifficulty = String(best_diff_string);
-              }
-              doc.clear();
-              mPoolUpdate = millis();
-              DEBUG_SERIAL_PRINTLN("\n####### Pool Data OK!");               
-          } else {
-              DEBUG_SERIAL_PRINTLN("\n####### Pool Data HTTP Error!");    
-              /* DEBUG_SERIAL_PRINTLN(httpCode);
-              String payload = http.getString();
-              DEBUG_SERIAL_PRINTLN(payload); */
-              // mPoolUpdate = millis();
-              pData.bestDifficulty = "P";
-              pData.workersHash = "E";
-              pData.workersCount = 0;
-              http.end();
-              return pData; 
-          }
-          http.end();
-        } catch(...) {
-          DEBUG_SERIAL_PRINTLN("####### Pool Error!");          
-          // mPoolUpdate = millis();
-          pData.bestDifficulty = "P";
-          pData.workersHash = "Error";
-          pData.workersCount = 0;
-          http.end();
-          return pData;
+        String btcWallet = Settings.BtcWallet;
+        // DEBUG_SERIAL_PRINTLN(btcWallet);
+        if (btcWallet.indexOf(".")>0) btcWallet = btcWallet.substring(0,btcWallet.indexOf("."));
+#ifdef SCREEN_WORKERS_ENABLE
+        DEBUG_SERIAL_PRINTLN("Pool API : " + poolAPIUrl+btcWallet);
+        http.begin(poolAPIUrl+btcWallet);
+#else
+        http.begin(String(getPublicPool)+btcWallet);
+#endif
+        int httpCode = http.GET();
+        if (httpCode == HTTP_CODE_OK) 
+        {
+            String payload = http.getString();
+            // DEBUG_SERIAL_PRINTLN(payload);
+            StaticJsonDocument<300> filter;
+            filter["bestDifficulty"] = true;
+            filter["workersCount"] = true;
+            filter["workers"][0]["sessionId"] = true;
+            filter["workers"][0]["hashRate"] = true;
+            StaticJsonDocument<2048> doc;
+            deserializeJson(doc, payload, DeserializationOption::Filter(filter));
+            //DEBUG_SERIAL_PRINTLN(serializeJsonPretty(doc, Serial));
+            if (doc.containsKey("workersCount")) pData.workersCount = doc["workersCount"].as<int>();
+            const JsonArray& workers = doc["workers"].as<JsonArray>();
+            double totalhashs = 0;
+            for (const JsonObject& worker : workers) 
+            {
+              totalhashs += worker["hashRate"].as<double>();
+              /* DEBUG_SERIAL_PRINT(worker["sessionId"].as<String>()+": ");
+              DEBUG_SERIAL_PRINT(" - "+worker["hashRate"].as<String>()+": ");
+              DEBUG_SERIAL_PRINTLN(totalhashs); */
+            }
+            char totalhashs_s[16] = {0};
+            suffix_string(totalhashs, totalhashs_s, 16, 0);
+            pData.workersHash = String(totalhashs_s);
+
+            double temp;
+            if (doc.containsKey("bestDifficulty")) 
+            {
+            temp = doc["bestDifficulty"].as<double>();
+            char best_diff_string[16] = {0};
+            suffix_string(temp, best_diff_string, 16, 0);
+            pData.bestDifficulty = String(best_diff_string);
+            }
+            doc.clear();
+            mPoolUpdate = millis();
+            DEBUG_SERIAL_PRINTLN("\n####### Pool Data OK!");
         } 
+        else
+        {
+            DEBUG_SERIAL_PRINTLN("\n####### Pool Data HTTP Error!");
+            /* DEBUG_SERIAL_PRINTLN(httpCode);
+            String payload = http.getString();
+            DEBUG_SERIAL_PRINTLN(payload); */
+            pData.bestDifficulty = "P";
+            pData.workersHash = "E";
+            pData.workersCount = 0;
+        }
+        http.end();
     }
     return pData;
 }
