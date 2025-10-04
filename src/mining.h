@@ -31,8 +31,6 @@
 
 // Nonce start values for different mining modes
 #define NONCE_START_RANDOM     0xDA54E700  // Random start nonce (non-zero for compatibility)
-#define NONCE_START_I2C_SLAVE  0x10000000  // Start nonce for I2C slave workers
-#define NONCE_START_I2C_FEED   0x20000000  // Start nonce for feeding I2C slaves
 
 void runMonitor(void *name);
 

@@ -143,7 +143,7 @@ pio test
 - Hardware mining: `NONCE_PER_JOB_HW=64K` nonces per job
 - Software mining: `NONCE_PER_JOB_SW=16K` nonces per job
 - Random nonce masking: `0xFFFFC000` for 16KB alignment
-- Start values: `NONCE_START_RANDOM=0xDA54E700`, `NONCE_START_I2C_SLAVE=0x10000000`
+- Start value: `NONCE_START_RANDOM=0xDA54E700`
 
 **Watchdog Configuration**
 - General WDT: 3 seconds (`WDT_TIMEOUT`)

@@ -19,7 +19,6 @@
 #include <map>
 #include <atomic>
 #include "mbedtls/sha256.h"
-#include "i2c_master.h"
 #include "esp_random.h"
 
 //10 Jobs per second
@@ -29,8 +28,6 @@
 // #define NONCE_PER_JOB_HW 32*1024 // Previous value
 #define NONCE_PER_JOB_SW 16384   // Doubled for better throughput
 #define NONCE_PER_JOB_HW 64*1024  // Doubled for better throughput
-
-//#define I2C_SLAVE
 
 //#define SHA256_VALIDATE
 //#define RANDOM_NONCE
@@ -261,22 +258,6 @@ void runStratumWorker(void *name) {
 
   std::map<uint32_t, std::shared_ptr<Submission>> s_submission_map;
 
-#ifdef I2C_SLAVE
-  std::vector<uint8_t> i2c_slave_vector;
-
-  //scan for i2c slaves
-  if (i2c_master_start() == 0)
-    i2c_slave_vector = i2c_master_scan(0x0, 0x80);
-  DEBUG_SERIAL_PRINTF("Found %d slave workers\n", i2c_slave_vector.size());
-  if (!i2c_slave_vector.empty())
-  {
-    DEBUG_SERIAL_PRINT("  Workers: ");
-    for (size_t n = 0; n < i2c_slave_vector.size(); ++n)
-      DEBUG_SERIAL_PRINTF("0x%02X,", (uint32_t)i2c_slave_vector[n]);
-    DEBUG_SERIAL_PRINTLN("");
-  }
-#endif
-
   // connect to pool
   double currentPoolDifficulty = DEFAULT_DIFFICULTY;
   uint32_t nonce_pool = 0;
@@ -501,12 +482,7 @@ void runStratumWorker(void *name) {
                                           #ifdef RANDOM_NONCE
                                           nonce_pool = RandomGet() & RANDOM_NONCE_MASK;
                                           #else
-                                            #ifdef I2C_SLAVE
-                                            if (!i2c_slave_vector.empty())
-                                              nonce_pool = NONCE_START_I2C_SLAVE;
-                                            else
-                                            #endif
-                                              nonce_pool = NONCE_START_RANDOM;
+                                          nonce_pool = NONCE_START_RANDOM;
                                           #endif
 
 
@@ -536,11 +512,6 @@ void runStratumWorker(void *name) {
                                               #endif
                                             }
                                           }
-                                          #ifdef I2C_SLAVE
-                                          // Feed I2C slaves with work starting from NONCE_START_I2C_FEED
-                                          // This gives 0x10000000 nonces per slave (difference between I2C_FEED and I2C_SLAVE)
-                                          i2c_feed_slaves(i2c_slave_vector, job_pool & 0xFF, NONCE_START_I2C_FEED >> 24, currentPoolDifficulty, mMiner.bytearray_blockheader);
-                                          #endif
                                       } else
                                       {
                                         DEBUG_SERIAL_PRINTF("Mining notify parse error (line: %.100s), restarting\n", line.c_str());
@@ -595,46 +566,7 @@ void runStratumWorker(void *name) {
     }
 
     std::list<std::shared_ptr<JobResult>> job_result_list;
-    #ifdef I2C_SLAVE
-    if (i2c_slave_vector.empty() || job_pool == 0xFFFFFFFF)
-    {
-      vTaskDelay(20 / portTICK_PERIOD_MS); //Reduced delay for better job distribution
-    } else
-    {
-      uint32_t time_start = millis();
-      i2c_hit_slaves(i2c_slave_vector);
-      vTaskDelay(5 / portTICK_PERIOD_MS);
-      uint32_t nonces_done = 0;
-      std::vector<uint32_t> nonce_vector = i2c_harvest_slaves(i2c_slave_vector, job_pool & 0xFF, nonces_done);
-      hashes.fetch_add(nonces_done, std::memory_order_relaxed);
-      for (size_t n = 0; n < nonce_vector.size(); ++n)
-      {
-        std::shared_ptr<JobResult> result = std::make_shared<JobResult>();
-        result->nonces_skipped = 0;  // I2C results always compute all assigned nonces
-        uint32_t nonce = nonce_vector[n];
-        if (nerd_sha256d_baked_nonce(diget_mid, bake, __builtin_bswap32(nonce), result->hash))
-        {
-          result->id = job_pool;
-          result->nonce = nonce;
-          result->nonce_count = 0;
-          result->difficulty = diff_from_target(result->hash);
-          job_result_list.push_back(result);
-        }
-      }
-      uint32_t time_end = millis();
-      //if (nonces_done > 16384)
-        //DEBUG_SERIAL_PRINTF("Harvest slaves in %dms hashes=%d\n", time_end - time_start, nonces_done);
-      if (time_end > time_start)
-      {
-        uint32_t elapsed = time_end - time_start;
-        if (elapsed < 50)
-          vTaskDelay((50 - elapsed) / portTICK_PERIOD_MS);
-      } else
-        vTaskDelay(40 / portTICK_PERIOD_MS);
-    }
-    #else
     vTaskDelay(20 / portTICK_PERIOD_MS); //Reduced delay for better job distribution
-    #endif
 
 
     if (job_pool != 0xFFFFFFFF)

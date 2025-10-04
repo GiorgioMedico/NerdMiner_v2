@@ -167,20 +167,6 @@ This document provides a comprehensive reference of all important mining-related
 - **Description**: Starting nonce for random nonce mode. Non-zero for compatibility with certain pools.
 - **Usage**: Used when `RANDOM_NONCE` is not defined (sequential mining mode).
 
-### `NONCE_START_I2C_SLAVE`
-- **Value**: `0x10000000` (268,435,456)
-- **Location**: `src/mining.h:34`
-- **Type**: Unsigned 32-bit integer (hex)
-- **Description**: Starting nonce range for I2C slave worker devices. Provides dedicated nonce space for distributed mining.
-- **Range**: 0x10000000 to 0x1FFFFFFF (256M nonces)
-
-### `NONCE_START_I2C_FEED`
-- **Value**: `0x20000000` (536,870,912)
-- **Location**: `src/mining.h:35`
-- **Type**: Unsigned 32-bit integer (hex)
-- **Description**: Starting nonce for feeding work to I2C slave miners.
-- **Range**: 0x20000000+ (allows feeding separate work to slaves)
-
 ### `RANDOM_NONCE_MASK`
 - **Value**: `0xFFFFC000`
 - **Location**: `src/mining.cpp:37`
