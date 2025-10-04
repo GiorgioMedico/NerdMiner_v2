@@ -20,7 +20,8 @@ unsigned long id = 1;
 static std::mutex s_id_mutex;
 
 //Get next JSON RPC Id
-unsigned long getNextId(unsigned long& id) {
+unsigned long getNextId(unsigned long& id) 
+{
     std::lock_guard<std::mutex> lock(s_id_mutex);
     if (id == ULONG_MAX) {
       id = 1;
@@ -30,18 +31,16 @@ unsigned long getNextId(unsigned long& id) {
 }
 
 //Verify Payload doesn't has zero length
-bool verifyPayload (const String& line){
-  if(line.length() == 0) return false;
-
-  // Check if string contains only whitespace
-  String trimmed = line;
-  trimmed.trim();
-  if(trimmed.isEmpty()) return false;
-
-  return true;
+bool verifyPayload(const String& line) 
+{
+    if(line.length() == 0) return false;
+    String trimmed = line;
+    trimmed.trim();
+    return !trimmed.isEmpty();
 }
 
-bool checkError(const StaticJsonDocument<BUFFER_JSON_DOC> doc) {
+bool checkError(const StaticJsonDocument<BUFFER_JSON_DOC> &doc) 
+{
   // Note: doc parameter is passed by value for read-only check
   // Caller must hold s_doc_mutex when calling this function
 
@@ -65,11 +64,7 @@ bool tx_mining_subscribe(WiFiClient& client, mining_subscribe& mSubscribe)
 
     // Subscribe
     id = 1; //Initialize id messages
-    #ifndef HAN
     int written = snprintf(payload, BUFFER, "{\"id\": %u, \"method\": \"mining.subscribe\", \"params\": [\"NerdMinerV2/%s\"]}\n", id, CURRENT_VERSION);
-    #else
-    int written = snprintf(payload, BUFFER, "{\"id\": %u, \"method\": \"mining.subscribe\", \"params\": [\"HAN_SOLOminer/%s\"]}\n", id, CURRENT_VERSION);
-    #endif
 
     if (written < 0 || written >= BUFFER) {
         DEBUG_SERIAL_PRINTF("ERROR: Buffer overflow in tx_mining_subscribe\n");
@@ -151,11 +146,12 @@ mining_subscribe init_mining_subscribe(void)
 }
 
 // Sanitize input string for JSON payloads (prevents format string attacks and JSON injection)
-static bool sanitize_json_string(const char* str, size_t max_len) {
+static bool sanitize_json_string(const char* str, size_t max_len) 
+{
     if (!str) return false;
 
     size_t len = strnlen(str, max_len + 1);
-    if (len > max_len) return false;  // String too long
+    if (len >= max_len) return false;  // String too long
 
     // Check for dangerous characters that could break JSON or be format strings
     for (size_t i = 0; i < len; i++) {
@@ -184,9 +180,9 @@ bool tx_mining_auth(WiFiClient& client, const char * user, const char * pass)
     }
 
     // Authorize
-    id = getNextId(id);
-    int written = snprintf(payload, BUFFER, "{\"params\": [\"%s\", \"%s\"], \"id\": %u, \"method\": \"mining.authorize\"}\n",
-      user, pass, id);
+    getNextId(id);
+    int written = snprintf(payload, BUFFER, "{\"id\": %lu, \"method\": \"mining.authorize\", \"params\": [\"%s\", \"%s\"]}\n",
+      id, user, pass);
 
     if (written < 0 || written >= BUFFER) {
         DEBUG_SERIAL_PRINTF("ERROR: Buffer overflow in tx_mining_auth\n");
@@ -205,7 +201,6 @@ bool tx_mining_auth(WiFiClient& client, const char * user, const char * pass)
     return true;
 }
 
-
 stratum_method parse_mining_method(const String& line)
 {
     if(!verifyPayload(line)) return STRATUM_PARSE_ERROR;
@@ -214,7 +209,12 @@ stratum_method parse_mining_method(const String& line)
     StaticJsonDocument<BUFFER_JSON_DOC> doc;
     DeserializationError error = deserializeJson(doc, line);
 
-    if (error || checkError(doc)) {
+    if (error) {
+        DEBUG_SERIAL_PRINTF("ERROR: JSON parse failed: %s\n", error.c_str());
+        return STRATUM_PARSE_ERROR;
+    }
+
+    if (checkError(doc)) {
         return STRATUM_PARSE_ERROR;
     }
 
@@ -226,15 +226,24 @@ stratum_method parse_mining_method(const String& line)
         return STRATUM_UNKNOWN;
     }
 
-    stratum_method result = STRATUM_UNKNOWN;
-
-    if (strcmp("mining.notify", (const char*) doc["method"]) == 0) {
-        result = MINING_NOTIFY;
-    } else if (strcmp("mining.set_difficulty", (const char*) doc["method"]) == 0) {
-        result = MINING_SET_DIFFICULTY;
+    const char* method = doc["method"];
+    if (!method) {
+        DEBUG_SERIAL_PRINTLN("ERROR: method field is null");
+        return STRATUM_PARSE_ERROR;
     }
 
-    return result;
+    // Check most common methods first
+    if (strncmp("mining.notify", method, 13) == 0 && method[13] == '\0') {
+        return MINING_NOTIFY;
+    }
+
+    if (strncmp("mining.set_difficulty", method, 21) == 0 && method[21] == '\0') {
+        return MINING_SET_DIFFICULTY;
+    }
+
+    // Log unknown methods for debugging
+    DEBUG_SERIAL_PRINTF("WARNING: Unknown stratum method: %s\n", method);
+    return STRATUM_UNKNOWN;
 }
 
 bool parse_mining_notify(const String& line, mining_job& mJob)
@@ -245,72 +254,131 @@ bool parse_mining_notify(const String& line, mining_job& mJob)
     StaticJsonDocument<BUFFER_JSON_DOC> doc;
     DeserializationError error = deserializeJson(doc, line);
 
-    if (error) {
+    if (error)
+    {
         return false;
     }
 
-    if (!doc.containsKey("params")) {
+    // Check for errors BEFORE processing any data
+    if (checkError(doc))
+    {
+        DEBUG_SERIAL_PRINTF("[WORKER] >>>>>>>>> Work aborted - error in response\n");
+        return false;
+    }
+
+    if (!doc.containsKey("params"))
+    {
         return false;
     }
 
     // Validate params array size
-    if (!doc["params"].is<JsonArray>() || doc["params"].size() < 9) {
+    if (!doc["params"].is<JsonArray>() || doc["params"].size() < 9)
+    {
         DEBUG_SERIAL_PRINTLN("ERROR: Invalid params array in mining.notify");
         return false;
     }
 
+    JsonArray params = doc["params"].as<JsonArray>();
+
+    // Validate and extract string params in single pass (indices: 0,1,2,3,5,6,7)
+    const char* job_id_ptr;
+    const char* prev_hash_ptr;
+    const char* coinb1_ptr;
+    const char* coinb2_ptr;
+    const char* version_ptr;
+    const char* nbits_ptr;
+    const char* ntime_ptr;
+
+    if (!params[0].is<const char*>() || !(job_id_ptr = params[0].as<const char*>()))
+    {
+        DEBUG_SERIAL_PRINTLN("ERROR: Invalid job_id");
+        return false;
+    }
+    if (!params[1].is<const char*>() || !(prev_hash_ptr = params[1].as<const char*>()))
+    {
+        DEBUG_SERIAL_PRINTLN("ERROR: Invalid prev_block_hash");
+        return false;
+    }
+    if (!params[2].is<const char*>() || !(coinb1_ptr = params[2].as<const char*>()))
+    {
+        DEBUG_SERIAL_PRINTLN("ERROR: Invalid coinb1");
+        return false;
+    }
+    if (!params[3].is<const char*>() || !(coinb2_ptr = params[3].as<const char*>()))
+    {
+        DEBUG_SERIAL_PRINTLN("ERROR: Invalid coinb2");
+        return false;
+    }
+    if (!params[5].is<const char*>() || !(version_ptr = params[5].as<const char*>()))
+    {
+        DEBUG_SERIAL_PRINTLN("ERROR: Invalid version");
+        return false;
+    }
+    if (!params[6].is<const char*>() || !(nbits_ptr = params[6].as<const char*>()))
+    {
+        DEBUG_SERIAL_PRINTLN("ERROR: Invalid nbits");
+        return false;
+    }
+    if (!params[7].is<const char*>() || !(ntime_ptr = params[7].as<const char*>()))
+    {
+        DEBUG_SERIAL_PRINTLN("ERROR: Invalid ntime");
+        return false;
+    }
+
+    // Validate clean_jobs boolean
+    if (!params[8].is<bool>())
+    {
+        DEBUG_SERIAL_PRINTLN("ERROR: clean_jobs is not a boolean");
+        return false;
+    }
+
+    // Validate and process merkle_branch
     mJob.merkle_branch_len = 0;
-    // Validate merkle_branch size
-    if (doc["params"][4].is<JsonArray>()) {
-        JsonArray merkle_array = doc["params"][4].as<JsonArray>();
+    if (params[4].is<JsonArray>())
+    {
+        JsonArray merkle_array = params[4].as<JsonArray>();
         size_t merkle_size = merkle_array.size();
-        if (merkle_size > MAX_MERKLE_BRANCHES) {
+
+        if (merkle_size > MAX_MERKLE_BRANCHES)
+        {
             DEBUG_SERIAL_PRINTF("ERROR: Merkle branch too large: %u > %u\n", merkle_size, MAX_MERKLE_BRANCHES);
             return false;
         }
-        for (size_t idx = 0; idx < merkle_size; ++idx) {
-            const char* branch_entry = merkle_array[idx];
-            if (!branch_entry) {
+
+        for (size_t idx = 0; idx < merkle_size; ++idx)
+        {
+            if (!merkle_array[idx].is<const char*>())
+            {
+                DEBUG_SERIAL_PRINTF("ERROR: Merkle branch entry %u is not a string\n", idx);
+                return false;
+            }
+
+            const char* branch_entry = merkle_array[idx].as<const char*>();
+            if (!branch_entry)
+            {
                 DEBUG_SERIAL_PRINTLN("ERROR: Null merkle branch entry");
                 return false;
             }
-            String branch_value(branch_entry);
-            if (branch_value.length() > MAX_HASH_LEN) {
-                DEBUG_SERIAL_PRINTLN("ERROR: Merkle branch entry too long");
-                return false;
-            }
-            mJob.merkle_branch[idx] = branch_value;
+
+            mJob.merkle_branch[idx] = String(branch_entry);
         }
         mJob.merkle_branch_len = merkle_size;
-    } else if (!doc["params"][4].isNull()) {
+    }
+    else if (!params[4].isNull())
+    {
         DEBUG_SERIAL_PRINTLN("ERROR: Invalid merkle_branch structure");
         return false;
     }
 
-    // Limit string lengths to prevent memory exhaustion
-    String job_id = String((const char*) doc["params"][0]);
-    String prev_block_hash = String((const char*) doc["params"][1]);
-    String coinb1 = String((const char*) doc["params"][2]);
-    String coinb2 = String((const char*) doc["params"][3]);
-    String version = String((const char*) doc["params"][5]);
-    String nbits = String((const char*) doc["params"][6]);
-    String ntime = String((const char*) doc["params"][7]);
-
-    if (job_id.length() > MAX_JOB_ID_LEN || prev_block_hash.length() > MAX_HASH_LEN ||
-        coinb1.length() > MAX_COINBASE_LEN || coinb2.length() > MAX_COINBASE_LEN ||
-        version.length() > MAX_VERSION_LEN || nbits.length() > MAX_NBITS_LEN || ntime.length() > MAX_NTIME_LEN) {
-        DEBUG_SERIAL_PRINTLN("ERROR: String field too long in mining.notify");
-        return false;
-    }
-
-    mJob.job_id = job_id;
-    mJob.prev_block_hash = prev_block_hash;
-    mJob.coinb1 = coinb1;
-    mJob.coinb2 = coinb2;
-    mJob.version = version;
-    mJob.nbits = nbits;
-    mJob.ntime = ntime;
-    mJob.clean_jobs = doc["params"][8]; //bool
+    // All validations passed - now safely construct and assign
+    mJob.job_id = String(job_id_ptr);
+    mJob.prev_block_hash = String(prev_hash_ptr);
+    mJob.coinb1 = String(coinb1_ptr);
+    mJob.coinb2 = String(coinb2_ptr);
+    mJob.version = String(version_ptr);
+    mJob.nbits = String(nbits_ptr);
+    mJob.ntime = String(ntime_ptr);
+    mJob.clean_jobs = params[8].as<bool>();
 
     #ifdef DEBUG_MINING
     DEBUG_SERIAL_PRINT("    job_id: "); DEBUG_SERIAL_PRINTLN(mJob.job_id);
@@ -324,15 +392,8 @@ bool parse_mining_notify(const String& line, mining_job& mJob)
     DEBUG_SERIAL_PRINT("    clean_jobs: "); DEBUG_SERIAL_PRINTLN(mJob.clean_jobs);
     #endif
 
-    //Check if parameters where correctly received
-    if (checkError(doc)) {
-      DEBUG_SERIAL_PRINTF("[WORKER] >>>>>>>>> Work aborted\n");
-      return false;
-    }
-
     return true;
 }
-
 
 bool tx_mining_submit(WiFiClient& client, mining_subscribe mWorker, mining_job mJob, unsigned long nonce, unsigned long &submit_id)
 {
@@ -340,39 +401,53 @@ bool tx_mining_submit(WiFiClient& client, mining_subscribe mWorker, mining_job m
 
     // Validate wName is null-terminated and not too long
     size_t wname_len = strnlen(mWorker.wName, sizeof(mWorker.wName));
-    if (wname_len >= sizeof(mWorker.wName)) {
+    if (wname_len >= sizeof(mWorker.wName))
+    {
         DEBUG_SERIAL_PRINTF("ERROR: wName not properly null-terminated\n");
         return false;
     }
 
+    // Validate client is connected
+    if (!client.connected())
+    {
+        DEBUG_SERIAL_PRINTF("ERROR: Client not connected\n");
+        return false;
+    }
+
     // Submit
-    id = getNextId(id);
-    submit_id = id;
+    submit_id = getNextId(id);
 
     char nonce_hex[9] = {0};
     int nonce_written = snprintf(nonce_hex, sizeof(nonce_hex), "%08lx", nonce);
-    if (nonce_written < 0 || nonce_written >= static_cast<int>(sizeof(nonce_hex))) {
+    if (nonce_written < 0 || nonce_written >= static_cast<int>(sizeof(nonce_hex)))
+    {
         DEBUG_SERIAL_PRINTF("ERROR: Failed to format nonce\n");
         return false;
     }
 
-    int written = snprintf(payload, BUFFER, "{\"id\":%u,\"method\":\"mining.submit\",\"params\":[\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"]}\n",
+    int written = snprintf(payload, BUFFER, "{\"id\": %lu, \"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"]}\n",
         id,
         mWorker.wName,
         mJob.job_id.c_str(),
         mWorker.extranonce2.c_str(),
         mJob.ntime.c_str(),
         nonce_hex
-        );
+    );
 
-    if (written < 0 || written >= BUFFER) {
-        DEBUG_SERIAL_PRINTF("ERROR: Buffer overflow in tx_mining_submit\n");
+    if (written < 0 || written >= BUFFER)
+    {
+        DEBUG_SERIAL_PRINTF("ERROR: Buffer overflow in tx_mining_submit (needed %d, have %d)\n", written, BUFFER);
         return false;
     }
 
     DEBUG_SERIAL_PRINT("  Sending  : "); DEBUG_SERIAL_PRINT(payload);
-    client.print(payload);
-    //DEBUG_SERIAL_PRINT("  Receiving: "); DEBUG_SERIAL_PRINTLN(client.readStringUntil('\n'));
+
+    size_t bytes_written = client.print(payload);
+    if (bytes_written != strlen(payload))
+    {
+        DEBUG_SERIAL_PRINTF("ERROR: Failed to send complete payload (%zu/%zu bytes)\n", bytes_written, strlen(payload));
+        return false;
+    }
 
     return true;
 }
@@ -393,6 +468,12 @@ bool parse_mining_set_difficulty(const String& line, double& difficulty)
         return false;
     }
 
+    // Validate params is array with at least 1 element
+    if (!doc["params"].is<JsonArray>() || doc["params"].size() < 1) {
+        DEBUG_SERIAL_PRINTLN("ERROR: Invalid params array in mining.set_difficulty");
+        return false;
+    }
+
     DEBUG_SERIAL_PRINT("    difficulty: "); DEBUG_SERIAL_PRINTLN((double)doc["params"][0],12);
     difficulty = (double)doc["params"][0];
 
@@ -403,8 +484,8 @@ bool tx_suggest_difficulty(WiFiClient& client, double difficulty)
 {
     char payload[BUFFER] = {0};
 
-    id = getNextId(id);
-    int written = snprintf(payload, BUFFER, "{\"id\":%d,\"method\":\"mining.suggest_difficulty\",\"params\":[%.10g]}\n", id, difficulty);
+    getNextId(id);
+    int written = snprintf(payload, BUFFER, "{\"id\": %lu, \"method\": \"mining.suggest_difficulty\", \"params\": [%.10g]}\n", id, difficulty);
 
     if (written < 0 || written >= BUFFER) {
         DEBUG_SERIAL_PRINTF("ERROR: Buffer overflow in tx_suggest_difficulty\n");
@@ -412,20 +493,29 @@ bool tx_suggest_difficulty(WiFiClient& client, double difficulty)
     }
 
     DEBUG_SERIAL_PRINT("  Sending  : "); DEBUG_SERIAL_PRINT(payload);
-    return client.print(payload);
+    size_t bytes_written = client.print(payload);
+    return bytes_written > 0;
 
 }
-
 
 unsigned long parse_extract_id(const String &line)
 {
     StaticJsonDocument<BUFFER_JSON_DOC> doc;
     DeserializationError error = deserializeJson(doc, line);
-    if (error) {
+    if (error) 
+    {
         return 0;
     }
 
-    if (!doc.containsKey("id")) {
+    if (!doc.containsKey("id")) 
+    {
+        return 0;
+    }
+
+    // Validate id is numeric type before casting
+    if (!doc["id"].is<unsigned long>()) 
+    {
+        DEBUG_SERIAL_PRINTLN("ERROR: id field is not numeric");
         return 0;
     }
 
