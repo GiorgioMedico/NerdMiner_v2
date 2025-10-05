@@ -227,7 +227,7 @@ struct Submission
   uint32_t timestamp_ms;  // Timestamp when submission was created (for timeout cleanup)
 };
 
-static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, std::shared_ptr<Submission>> & submission_map)
+static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, std::shared_ptr<Submission>> &submission_map, std::mutex &submission_mutex)
 {
   {
     std::lock_guard<std::mutex> lock(s_job_mutex);
@@ -239,8 +239,12 @@ static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, std::shared_ptr
   }
   s_working_current_job_id.store(0xFF, std::memory_order_release);
   job_pool = 0xFFFFFFFF;
-  // NOTE: Caller MUST clear submission_map while holding s_submission_mutex
-  // to prevent race conditions. This function does NOT clear the map.
+
+  // Clear submission map under lock to prevent race conditions
+  {
+    std::lock_guard<std::mutex> sub_lock(submission_mutex);
+    submission_map.clear();
+  }
 }
 
 #ifdef RANDOM_NONCE
@@ -289,11 +293,7 @@ void runStratumWorker(void *name)
       // WiFi is disconnected, so reconnect now
       mMonitor.NerdStatus.store(NM_Connecting, std::memory_order_release);
       s_client_connected.store(false, std::memory_order_release);
-      {
-        std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
-        MiningJobStop(job_pool, s_submission_map);
-        s_submission_map.clear();
-      }
+      MiningJobStop(job_pool, s_submission_map, s_submission_mutex);
       pending_len = 0; // Drop any partial data from the old socket
       WiFi.reconnect();
       vTaskDelay(5000 / portTICK_PERIOD_MS);
@@ -329,11 +329,7 @@ void runStratumWorker(void *name)
     {
       //If server is not reachable add random delay for connection retries
       //Generate value between 1 and 60 secs
-      {
-        std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
-        MiningJobStop(job_pool, s_submission_map);
-        s_submission_map.clear();
-      }
+      MiningJobStop(job_pool, s_submission_map, s_submission_mutex);
       vTaskDelay(((1 + rand() % 60) * 1000) / portTICK_PERIOD_MS);
       continue;
     }
@@ -354,11 +350,7 @@ void runStratumWorker(void *name)
         client.stop();
         cached_connected = false;  // Invalidate connection cache
         pending_len = 0;
-        {
-          std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
-          MiningJobStop(job_pool, s_submission_map);
-          s_submission_map.clear();
-        }
+        MiningJobStop(job_pool, s_submission_map, s_submission_mutex);
         continue;
       }
       
@@ -386,11 +378,7 @@ void runStratumWorker(void *name)
       cached_connected = false;  // Invalidate connection cache
       pending_len = 0;
       isMinerSuscribed.store(false, std::memory_order_release);
-      {
-        std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
-        MiningJobStop(job_pool, s_submission_map);
-        s_submission_map.clear();
-      }
+      MiningJobStop(job_pool, s_submission_map, s_submission_mutex);
       continue;
     }
 
@@ -405,11 +393,7 @@ void runStratumWorker(void *name)
         cached_connected = false;  // Invalidate connection cache
         pending_len = 0;
         isMinerSuscribed.store(false, std::memory_order_release);
-        {
-          std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
-          MiningJobStop(job_pool, s_submission_map);
-          s_submission_map.clear();
-        }
+        MiningJobStop(job_pool, s_submission_map, s_submission_mutex);
         continue;
       }
     }
@@ -473,11 +457,7 @@ void runStratumWorker(void *name)
         client.stop();
         cached_connected = false;  // Invalidate connection cache
         isMinerSuscribed.store(false, std::memory_order_release);
-        {
-          std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
-          MiningJobStop(job_pool, s_submission_map);
-          s_submission_map.clear();
-        }
+        MiningJobStop(job_pool, s_submission_map, s_submission_mutex);
         vTaskDelay(5000 / portTICK_PERIOD_MS); // Wait 5s before reconnecting
         break;
       }
@@ -630,11 +610,7 @@ void runStratumWorker(void *name)
                                         cached_connected = false;  // Invalidate connection cache
                                         pending_len = 0;
                                         isMinerSuscribed.store(false, std::memory_order_release);
-                                        {
-                                          std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
-                                          MiningJobStop(job_pool, s_submission_map);
-                                          s_submission_map.clear();
-                                        }
+                                        MiningJobStop(job_pool, s_submission_map, s_submission_mutex);
                                       }
                                       break;
           case MINING_SET_DIFFICULTY: parse_mining_set_difficulty(pending_buffer, currentPoolDifficulty);
