@@ -24,16 +24,11 @@
 //10 Jobs per second
 // #define NONCE_PER_JOB_SW 4096
 // #define NONCE_PER_JOB_HW 16*1024
-// #define NONCE_PER_JOB_SW 8192   // Previous value
-// #define NONCE_PER_JOB_HW 32*1024 // Previous value
 #define NONCE_PER_JOB_SW 16384   // Doubled for better throughput
 #define NONCE_PER_JOB_HW 64*1024  // Doubled for better throughput
 
 //#define SHA256_VALIDATE
-//#define RANDOM_NONCE
-// Random nonce mask: clears lower 14 bits (0x3FFF) to ensure 16KB alignment
-// This provides better distribution across nonce space for random mining
-#define RANDOM_NONCE_MASK 0xFFFFC000
+#define RANDOM_NONCE
 
 
 #ifdef HARDWARE_SHA265
@@ -79,7 +74,7 @@ mining_subscribe mWorker;
 mining_job mJob;
 monitor_data mMonitor;
 static std::atomic<bool> isMinerSuscribed{false};
-unsigned long mLastTXtoPool = millis();
+uint32_t mLastTXtoPool = millis();
 
 int saveIntervals[7] = {5 * 60, 15 * 60, 30 * 60, 1 * 3600, 3 * 3600, 6 * 3600, 12 * 3600};
 int saveIntervalsSize = sizeof(saveIntervals)/sizeof(saveIntervals[0]);
@@ -106,12 +101,12 @@ bool checkPoolConnection(void)
 
   DEBUG_SERIAL_PRINTLN("Client not connected, trying to connect...");
 
-  // DNS resolution with caching (5 min timeout)
+  // DNS resolution with caching (1 hour timeout - pools rarely change IPs)
   static bool dns_resolved = false;
   static uint32_t last_dns_resolve = 0;
   uint32_t now = millis();
 
-  if (!dns_resolved || (now - last_dns_resolve > 300000)) {
+  if (!dns_resolved || (now - last_dns_resolve > DNS_CACHE_DURATION_MS)) {
     if (WiFi.hostByName(Settings.PoolAddress.c_str(), serverIP) != 1) {
       DEBUG_SERIAL_PRINTLN("DNS resolution failed: " + Settings.PoolAddress);
       dns_resolved = false;
@@ -133,11 +128,23 @@ bool checkPoolConnection(void)
   return true;
 }
 
-//Implements a socketKeepAlive function and 
+// Helper: Handle 32-bit timestamp wraparound (occurs every ~49 days)
+static inline void adjust_for_wraparound(uint32_t now, uint32_t &old_time) {
+  if (now < old_time) {
+    old_time = now;
+  }
+}
+
+// Helper: Calculate time difference with wraparound handling
+static inline uint32_t time_elapsed(uint32_t now, uint32_t start) {
+  return (now >= start) ? (now - start) : (UINT32_MAX - start + now);
+}
+
+//Implements a socketKeepAlive function and
 //checks if pool is not sending any data to reconnect again.
 //Even connection could be alive, pool could stop sending new job NOTIFY
-unsigned long mStart0Hashrate = 0;
-bool checkPoolInactivity(unsigned int keepAliveTime, unsigned long inactivityTime)
+uint32_t mStart0Hashrate = 0;
+bool checkPoolInactivity(uint32_t keepAliveTime, uint32_t inactivityTime)
 {
     // Read hashrate calculated by runMonitor (no race condition, no wraparound issues)
     unsigned long elapsedKHs_local = elapsedKHs.load(std::memory_order_relaxed);
@@ -145,9 +152,7 @@ bool checkPoolInactivity(unsigned int keepAliveTime, unsigned long inactivityTim
     uint32_t time_now = millis();
 
     // If no shares sent to pool, send something to pool to hold socket open
-    // Handle 32-bit timestamp wraparound (occurs every ~49 days)
-    if (time_now < mLastTXtoPool)
-      mLastTXtoPool = time_now;
+    adjust_for_wraparound(time_now, mLastTXtoPool);
     if ( time_now > mLastTXtoPool + keepAliveTime)
     {
       mLastTXtoPool = time_now;
@@ -276,9 +281,11 @@ void runStratumWorker(void *name)
   static char pending_buffer[MAX_POOL_LINE_SIZE + 1];
   static uint16_t pending_len = 0;
 
-  while(true) {
+  while(true) 
+  {
       
-    if(WiFi.status() != WL_CONNECTED){
+    if(WiFi.status() != WL_CONNECTED)
+    {
       // WiFi is disconnected, so reconnect now
       mMonitor.NerdStatus.store(NM_Connecting, std::memory_order_release);
       s_client_connected.store(false, std::memory_order_release);
@@ -293,8 +300,33 @@ void runStratumWorker(void *name)
       continue;
     } 
 
-    bool wasDisconnected = !client.connected();
-    if(!checkPoolConnection()){
+    // Cache connection checks to reduce overhead (only recheck every CONN_CHECK_CACHE_MS)
+    // TELEMETRY: Track cache hit rate by counting else branch vs total checks
+    // Expected: 90%+ cache hits (100ms cache, 20ms loop = ~5 checks per cache refresh)
+    static bool cached_connected = false;
+    static uint32_t last_conn_check = 0;
+    uint32_t now = millis();
+
+    adjust_for_wraparound(now, last_conn_check);
+
+    bool wasDisconnected = false;
+    bool need_reconnect = false;
+
+    // Only perform expensive connection check if cache expired or last check failed
+    if (!cached_connected || (now - last_conn_check) >= CONN_CHECK_CACHE_MS) {
+      wasDisconnected = !client.connected();
+      cached_connected = checkPoolConnection();
+      last_conn_check = now;
+      need_reconnect = !cached_connected;
+      // TELEMETRY: Increment cache_miss counter here
+    } else {
+      // Use cached result
+      need_reconnect = !cached_connected;
+      // TELEMETRY: Increment cache_hit counter here
+    }
+
+    if(need_reconnect)
+    {
       //If server is not reachable add random delay for connection retries
       //Generate value between 1 and 60 secs
       {
@@ -306,7 +338,8 @@ void runStratumWorker(void *name)
       continue;
     }
 
-    if (wasDisconnected) {
+    if (wasDisconnected) 
+    {
       pending_len = 0; // Clear stale partial response after reconnecting
     }
 
@@ -316,8 +349,10 @@ void runStratumWorker(void *name)
       mWorker = init_mining_subscribe();
 
       // STEP 1: Pool server connection (SUBSCRIBE)
-      if(!tx_mining_subscribe(client, mWorker)) {
+      if(!tx_mining_subscribe(client, mWorker))
+      {
         client.stop();
+        cached_connected = false;  // Invalidate connection cache
         pending_len = 0;
         {
           std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
@@ -343,10 +378,12 @@ void runStratumWorker(void *name)
     }
 
     //Check if pool is down for almost 5minutes and then restart connection with pool (1min=600000ms)
-    if(checkPoolInactivity(KEEPALIVE_TIME_ms, POOLINACTIVITY_TIME_ms)){
+    if(checkPoolInactivity(KEEPALIVE_TIME_ms, POOLINACTIVITY_TIME_ms))
+    {
       //Restart connection
       DEBUG_SERIAL_PRINTLN("  Detected more than 2 min without data form stratum server. Closing socket and reopening...");
       client.stop();
+      cached_connected = false;  // Invalidate connection cache
       pending_len = 0;
       isMinerSuscribed.store(false, std::memory_order_release);
       {
@@ -359,13 +396,13 @@ void runStratumWorker(void *name)
 
     {
       uint32_t time_now = millis();
-      // Handle 32-bit timestamp wraparound
-      if (time_now < last_job_time)
-        last_job_time = time_now;
+      adjust_for_wraparound(time_now, last_job_time);
+
       // Reconnect if no job received for 10 minutes
-      if (time_now >= last_job_time + 10*60*1000)
+      if (time_now >= last_job_time + JOB_TIMEOUT_MS)
       {
         client.stop();
+        cached_connected = false;  // Invalidate connection cache
         pending_len = 0;
         isMinerSuscribed.store(false, std::memory_order_release);
         {
@@ -385,31 +422,56 @@ void runStratumWorker(void *name)
     #endif
 
     //Read pending messages from pool
-    while(client.connected() && client.available())
+    int available = client.available();
+    while(client.connected() && available > 0)
     {
       // Accumulate data until we get a full line (preserve partial reads across socket timeouts)
       bool foundNewline = false;
 
-      while (client.available() && pending_len < sizeof(pending_buffer) - 1) {
-        char c = client.read();
-        if (c == '\n') {
-          foundNewline = true;
-          break;
+      // Optimized bulk read: read chunks instead of byte-by-byte to reduce syscalls
+      // Chunks align with typical stratum message sizes (200-800 bytes)
+      while (available > 0 && pending_len < sizeof(pending_buffer) - 1)
+      {
+        size_t space_available = sizeof(pending_buffer) - pending_len - 1;
+        size_t chunk_size = min((size_t)available, min(space_available, (size_t)CHUNK_READ_SIZE));
+
+        uint8_t chunk[CHUNK_READ_SIZE];
+        int bytes_read = client.readBytes(chunk, chunk_size);
+        available = client.available();  // Refresh after reading
+
+        for (int i = 0; i < bytes_read; i++)
+        {
+          char c = chunk[i];
+          if (c == '\n')
+          {
+            foundNewline = true;
+            break;
+          }
+          if (c != '\r')
+          { // Skip carriage return
+            // Defensive bounds check (should never overflow with correct chunk_size calculation)
+            if (pending_len >= sizeof(pending_buffer) - 1) break;
+            pending_buffer[pending_len++] = c;
+          }
         }
-        if (c != '\r') { // Skip carriage return
-          pending_buffer[pending_len++] = c;
-        }
+
+        if (foundNewline) break;
       }
 
       // If we hit the size limit without finding newline, discard rest of line and disconnect
-      if (!foundNewline && pending_len >= sizeof(pending_buffer) - 1) {
+      if (!foundNewline && pending_len >= sizeof(pending_buffer) - 1)
+      {
         DEBUG_SERIAL_PRINTF("Pool response too large (%u bytes), disconnecting\n", pending_len);
         // Consume remaining data on this line
-        while (client.available()) {
+        available = client.available();
+        while (available > 0)
+        {
           if (client.read() == '\n') break;
+          available = client.available();
         }
         pending_len = 0;
         client.stop();
+        cached_connected = false;  // Invalidate connection cache
         isMinerSuscribed.store(false, std::memory_order_release);
         {
           std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
@@ -421,24 +483,62 @@ void runStratumWorker(void *name)
       }
 
       // Wait for more data if newline not found yet
-      if (!foundNewline) {
+      if (!foundNewline) 
+      {
         continue;
       }
 
-      // Null-terminate and create String from buffer
+      // Null-terminate buffer (no String allocation needed)
       pending_buffer[pending_len] = '\0';
-      String line = String(pending_buffer);
       pending_len = 0;
 
       // Ignore empty keepalive lines
-      if (line.length() == 0) {
+      if (pending_buffer[0] == '\0')
+      {
         continue;
       }
-      //DEBUG_SERIAL_PRINTLN("  Received message from pool");      
-      stratum_method result = parse_mining_method(line);
+      //DEBUG_SERIAL_PRINTLN("  Received message from pool");
+
+      // Fast-path message parsing: check for common patterns before full JSON parse
+      // This reduces CPU overhead by avoiding unnecessary JSON deserialization
+      // TELEMETRY: Track fast-path hit rate vs parse_mining_method() fallback calls
+      // Expected: 90%+ fast-path (mining.notify + set_difficulty dominate traffic)
+      // Alert if: fallback rate >10% (unexpected pool messages or protocol changes)
+      stratum_method result;
+      const char* msg = pending_buffer;
+
+      // Quick check for method messages (most common during mining)
+      if (msg[0] == '{' && strstr(msg, "\"method\"") != nullptr) {
+        // Check for mining.notify (most frequent message type)
+        if (strstr(msg, "mining.notify") != nullptr) {
+          result = MINING_NOTIFY;
+          // TELEMETRY: Increment fast_path_notify counter
+        } else if (strstr(msg, "mining.set_difficulty") != nullptr) {
+          result = MINING_SET_DIFFICULTY;
+          // TELEMETRY: Increment fast_path_difficulty counter
+        } else {
+          // Uncommon method, use full parser
+          result = parse_mining_method(msg);
+          // TELEMETRY: Increment fast_path_fallback counter
+        }
+      } else if (msg[0] == '{' && strstr(msg, "\"result\"") != nullptr) {
+        // Result message - check for success/error
+        if (strstr(msg, "\"error\":null") != nullptr || strstr(msg, "\"result\":true") != nullptr) {
+          result = STRATUM_SUCCESS;
+        } else if (strstr(msg, "\"error\":[") != nullptr || strstr(msg, "\"error\": [") != nullptr) {
+          result = STRATUM_PARSE_ERROR;
+        } else {
+          // Ambiguous, use full parser
+          result = parse_mining_method(msg);
+        }
+      } else {
+        // Unknown format, use full parser
+        result = parse_mining_method(msg);
+      }
+
       switch (result)
       {
-          case MINING_NOTIFY:         if(parse_mining_notify(line, mJob))
+          case MINING_NOTIFY:         if(parse_mining_notify(pending_buffer, mJob))
                                       {
                                           // Clear job lists to prevent stale work
                                           {
@@ -487,42 +587,47 @@ void runStratumWorker(void *name)
                                           #endif
 
                                           #ifdef RANDOM_NONCE
-                                          nonce_pool = RandomGet() & RANDOM_NONCE_MASK;
+                                          nonce_pool = RandomGet();  // Random start with full 32-bit coverage
                                           #else
                                           nonce_pool = NONCE_START_RANDOM;
                                           #endif
 
 
+                                          // Prepare jobs outside lock to reduce mutex hold time
+                                          std::list<std::shared_ptr<JobRequest>> new_sw_jobs;
+                                          #ifdef HARDWARE_SHA265
+                                          std::list<std::shared_ptr<JobRequest>> new_hw_jobs;
+                                          #endif
+
+                                          for (int i = 0; i < 4; ++ i)
+                                          {
+                                            #if 1
+                                            JobPush(new_sw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_SW, currentPoolDifficulty, mMiner.bytearray_blockheader, diget_mid, bake);
+                                            nonce_pool += NONCE_PER_JOB_SW;  // Sequential increment (wraparound automatic)
+                                            #endif
+                                            #ifdef HARDWARE_SHA265
+                                              #if defined(CONFIG_IDF_TARGET_ESP32)
+                                                JobPush(new_hw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, sha_buffer_swap, hw_midstate, bake);
+                                              #else
+                                                JobPush(new_hw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, mMiner.bytearray_blockheader, hw_midstate, bake);
+                                              #endif
+                                            nonce_pool += NONCE_PER_JOB_HW;  // Sequential increment (wraparound automatic)
+                                            #endif
+                                          }
+
+                                          // Quick batch insert under lock
                                           {
                                             std::lock_guard<std::mutex> lock(s_job_mutex);
-                                            for (int i = 0; i < 4; ++ i)
-                                            {
-                                              #if 1
-                                              JobPush( s_job_request_list_sw, job_pool, nonce_pool, NONCE_PER_JOB_SW, currentPoolDifficulty, mMiner.bytearray_blockheader, diget_mid, bake);
-                                              #ifdef RANDOM_NONCE
-                                              nonce_pool = RandomGet() & RANDOM_NONCE_MASK;
-                                              #else
-                                              nonce_pool += NONCE_PER_JOB_SW;
-                                              #endif
-                                              #endif
-                                              #ifdef HARDWARE_SHA265
-                                                #if defined(CONFIG_IDF_TARGET_ESP32)
-                                                  JobPush( s_job_request_list_hw, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, sha_buffer_swap, hw_midstate, bake);
-                                                #else
-                                                  JobPush( s_job_request_list_hw, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, mMiner.bytearray_blockheader, hw_midstate, bake);
-                                                #endif
-                                              #ifdef RANDOM_NONCE
-                                              nonce_pool = RandomGet() & RANDOM_NONCE_MASK;
-                                              #else
-                                              nonce_pool += NONCE_PER_JOB_HW;
-                                              #endif
-                                              #endif
-                                            }
+                                            s_job_request_list_sw.splice(s_job_request_list_sw.end(), new_sw_jobs);
+                                            #ifdef HARDWARE_SHA265
+                                            s_job_request_list_hw.splice(s_job_request_list_hw.end(), new_hw_jobs);
+                                            #endif
                                           }
                                       } else
                                       {
-                                        DEBUG_SERIAL_PRINTF("Mining notify parse error (line: %.100s), restarting\n", line.c_str());
+                                        DEBUG_SERIAL_PRINTF("Mining notify parse error (line: %.100s), restarting\n", pending_buffer);
                                         client.stop();
+                                        cached_connected = false;  // Invalidate connection cache
                                         pending_len = 0;
                                         isMinerSuscribed.store(false, std::memory_order_release);
                                         {
@@ -532,10 +637,10 @@ void runStratumWorker(void *name)
                                         }
                                       }
                                       break;
-          case MINING_SET_DIFFICULTY: parse_mining_set_difficulty(line, currentPoolDifficulty);
+          case MINING_SET_DIFFICULTY: parse_mining_set_difficulty(pending_buffer, currentPoolDifficulty);
                                       break;
           case STRATUM_SUCCESS:       {
-                                        unsigned long id = parse_extract_id(line);
+                                        unsigned long id = parse_extract_id(pending_buffer);
                                         std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
                                         auto itt = s_submission_map.find(id);
                                         if (itt != s_submission_map.end())
@@ -557,12 +662,12 @@ void runStratumWorker(void *name)
                                       }
                                       break;
           case STRATUM_PARSE_ERROR:   {
-                                        unsigned long id = parse_extract_id(line);
+                                        unsigned long id = parse_extract_id(pending_buffer);
                                         std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
                                         auto itt = s_submission_map.find(id);
                                         if (itt != s_submission_map.end())
                                         {
-                                          DEBUG_SERIAL_PRINTF("Pool refused submission %d (line: %.100s)\n", id, line.c_str());
+                                          DEBUG_SERIAL_PRINTF("Pool refused submission %d (line: %.100s)\n", id, pending_buffer);
                                           s_submission_map.erase(itt);
                                         }
                                       }
@@ -570,48 +675,109 @@ void runStratumWorker(void *name)
           default:                    DEBUG_SERIAL_PRINTLN("  Parsed JSON: unknown"); break;
 
       }
+
+      // Refresh available bytes for next iteration
+      available = client.available();
     }
 
     std::list<std::shared_ptr<JobResult>> job_result_list;
-    vTaskDelay(20 / portTICK_PERIOD_MS); //Reduced delay for better job distribution
+
+    // Adaptive delay: use shorter delays when work is available for better responsiveness
+    // TELEMETRY: Monitor delay_ms distribution to tune responsiveness vs CPU usage
+    // Expected: ACTIVE_MS when queue < 50%, NORMAL_MS when queue 75%+, IDLE_MS otherwise
+    uint32_t delay_ms;
+    {
+      std::lock_guard<std::mutex> lock(s_job_mutex);
+      bool has_pending_results = !s_job_result_list.empty();
+      bool sw_queue_low = s_job_request_list_sw.size() < JOB_QUEUE_SIZE / 2;
+      #ifdef HARDWARE_SHA265
+      bool hw_queue_low = s_job_request_list_hw.size() < JOB_QUEUE_SIZE / 2;
+      #else
+      bool hw_queue_low = false;
+      #endif
+
+      // TELEMETRY: Track queue depths: s_job_request_list_sw.size(), s_job_request_list_hw.size()
+      // Healthy range: 4-8 jobs queued (50-100% of JOB_QUEUE_SIZE)
+      if (has_pending_results || sw_queue_low || hw_queue_low) {
+        delay_ms = STRATUM_DELAY_ACTIVE_MS;  // Work available - high priority
+      } else if (s_job_request_list_sw.size() >= JOB_QUEUE_SIZE * 3 / 4) {
+        delay_ms = STRATUM_DELAY_NORMAL_MS;  // Queues healthy - normal operation
+      } else {
+        delay_ms = STRATUM_DELAY_IDLE_MS;    // Idle - conserve CPU
+      }
+    }
+    vTaskDelay(delay_ms / portTICK_PERIOD_MS);
 
 
     if (job_pool != 0xFFFFFFFF)
     {
+      // Prepare jobs outside lock to minimize contention
+      std::list<std::shared_ptr<JobRequest>> new_jobs_sw;
+      #ifdef HARDWARE_SHA265
+      std::list<std::shared_ptr<JobRequest>> new_jobs_hw;
+      #endif
+
+      size_t current_sw_size, current_hw_size = 0;
+      {
+        // Quick check of queue sizes
+        std::lock_guard<std::mutex> lock(s_job_mutex);
+        current_sw_size = s_job_request_list_sw.size();
+        #ifdef HARDWARE_SHA265
+        current_hw_size = s_job_request_list_hw.size();
+        #endif
+      }
+
+      // Incremental refill SW: Create jobs outside lock
+      constexpr size_t REFILL_THRESHOLD_SW = JOB_QUEUE_SIZE / 2;
+      if (current_sw_size < REFILL_THRESHOLD_SW)
+      {
+        size_t space_available = JOB_QUEUE_SIZE - current_sw_size;
+        size_t jobs_to_create = (space_available < JOB_REFILL_BATCH) ? space_available : JOB_REFILL_BATCH;
+        for (size_t i = 0; i < jobs_to_create; ++i)
+        {
+          JobPush(new_jobs_sw, job_pool, nonce_pool, NONCE_PER_JOB_SW, currentPoolDifficulty, mMiner.bytearray_blockheader, diget_mid, bake);
+          nonce_pool += NONCE_PER_JOB_SW;  // Sequential increment (wraparound automatic)
+        }
+      }
+
+      #ifdef HARDWARE_SHA265
+      // Incremental refill HW: Create jobs outside lock
+      constexpr size_t REFILL_THRESHOLD_HW = JOB_QUEUE_SIZE / 2;
+      if (current_hw_size < REFILL_THRESHOLD_HW)
+      {
+        size_t space_available = JOB_QUEUE_SIZE - current_hw_size;
+        size_t jobs_to_create = (space_available < JOB_REFILL_BATCH) ? space_available : JOB_REFILL_BATCH;
+        for (size_t i = 0; i < jobs_to_create; ++i)
+        {
+          #if defined(CONFIG_IDF_TARGET_ESP32)
+            JobPush(new_jobs_hw, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, sha_buffer_swap, hw_midstate, bake);
+          #else
+            JobPush(new_jobs_hw, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, mMiner.bytearray_blockheader, hw_midstate, bake);
+          #endif
+          nonce_pool += NONCE_PER_JOB_HW;  // Sequential increment (wraparound automatic)
+        }
+      }
+      #endif
+
+      // Fast insertion under lock using splice
       {
         std::lock_guard<std::mutex> lock(s_job_mutex);
         job_result_list.insert(job_result_list.end(), s_job_result_list.begin(), s_job_result_list.end());
         s_job_result_list.clear();
 
-#if 1
-        while (s_job_request_list_sw.size() < JOB_QUEUE_SIZE)
-        {
-          JobPush( s_job_request_list_sw, job_pool, nonce_pool, NONCE_PER_JOB_SW, currentPoolDifficulty, mMiner.bytearray_blockheader, diget_mid, bake);
-          #ifdef RANDOM_NONCE
-          nonce_pool = RandomGet() & RANDOM_NONCE_MASK;
-          #else
-          nonce_pool += NONCE_PER_JOB_SW;
-          #endif
+        if (!new_jobs_sw.empty()) {
+          s_job_request_list_sw.splice(s_job_request_list_sw.end(), new_jobs_sw);
         }
-#endif
-
         #ifdef HARDWARE_SHA265
-        while (s_job_request_list_hw.size() < JOB_QUEUE_SIZE)
-        {
-          #if defined(CONFIG_IDF_TARGET_ESP32)
-            JobPush( s_job_request_list_hw, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, sha_buffer_swap, hw_midstate, bake);
-          #else
-            JobPush( s_job_request_list_hw, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, mMiner.bytearray_blockheader, hw_midstate, bake);
-          #endif
-          #ifdef RANDOM_NONCE
-          nonce_pool = RandomGet() & RANDOM_NONCE_MASK;
-          #else
-          nonce_pool += NONCE_PER_JOB_HW;
-          #endif
+        if (!new_jobs_hw.empty()) {
+          s_job_request_list_hw.splice(s_job_request_list_hw.end(), new_jobs_hw);
         }
         #endif
       }
     }
+
+    // Batch atomic hash updates: accumulate locally, update once at end
+    uint32_t total_hashes_processed = 0;
 
     while (!job_result_list.empty())
     {
@@ -620,7 +786,7 @@ void runStratumWorker(void *name)
 
       // Only count actually processed nonces in hashrate (skipped nonces weren't computed)
       if (res->nonce_count > res->nonces_skipped) {
-        hashes.fetch_add(res->nonce_count - res->nonces_skipped, std::memory_order_relaxed);
+        total_hashes_processed += (res->nonce_count - res->nonces_skipped);
       }
       if (res->difficulty > currentPoolDifficulty && job_pool == res->id && res->nonce != 0xFFFFFFFF)
       {
@@ -661,26 +827,40 @@ void runStratumWorker(void *name)
 
           // Cleanup strategy: First evict old entries (60s timeout), then FIFO if still oversized
           // Only scan for timeouts if map is getting full (avoid hot path overhead)
-          constexpr size_t CLEANUP_THRESHOLD = SUBMISSION_MAP_MAX / 2;
+          // Use 1/3 threshold instead of 1/2 to trigger cleanup earlier and prevent OOM
+          // Use lazy evaluation: only run cleanup every Nth insertion to reduce overhead
+          // TELEMETRY: Monitor cleanup frequency and removed_count
+          // Expected: Cleanup runs rarely (<1% of submissions), removes 0-2 entries typically
+          // Alert if: cleanup_counter hits CLEANUP_BATCH_INTERVAL frequently (map pressure)
+          static uint32_t cleanup_counter = 0;
+          constexpr size_t CLEANUP_THRESHOLD = SUBMISSION_MAP_MAX / 3;
+          constexpr size_t TARGET_SIZE = CLEANUP_THRESHOLD / 2;  // Clean down to this size
 
-          if (s_submission_map.size() >= CLEANUP_THRESHOLD) {
+          if (s_submission_map.size() >= CLEANUP_THRESHOLD &&
+              ++cleanup_counter >= CLEANUP_BATCH_INTERVAL) {
+            cleanup_counter = 0;  // Reset counter
             uint32_t now = millis();
-            constexpr uint32_t SUBMISSION_TIMEOUT_MS = 60000;  // 60 second pool response timeout
+            size_t removed_count = 0;
 
             // First pass: Remove timed-out submissions
-            for (auto it = s_submission_map.begin(); it != s_submission_map.end(); ) {
-              // Handle timestamp wraparound (occurs every ~49 days)
-              uint32_t age = (now >= it->second->timestamp_ms)
-                            ? (now - it->second->timestamp_ms)
-                            : (UINT32_MAX - it->second->timestamp_ms + now);
+            // Early exit once we've cleaned enough to get back below target
+            for (auto it = s_submission_map.begin();
+                 it != s_submission_map.end() && s_submission_map.size() > TARGET_SIZE; ) {
+              uint32_t age = time_elapsed(now, it->second->timestamp_ms);
 
               if (age > SUBMISSION_TIMEOUT_MS) {
                 DEBUG_SERIAL_PRINTF("[WARN] Evicting timed-out submission ID=%lu (age=%lums)\n",
                                     it->first, age);
                 it = s_submission_map.erase(it);
+                removed_count++;
               } else {
                 ++it;
               }
+            }
+
+            if (removed_count > 0) {
+              DEBUG_SERIAL_PRINTF("[INFO] Cleaned %zu timed-out submissions, size now %zu\n",
+                                  removed_count, s_submission_map.size());
             }
           }
 
@@ -692,6 +872,11 @@ void runStratumWorker(void *name)
           }
         }
       }
+    }
+
+    // Apply batched hash update (single atomic operation instead of per-result)
+    if (total_hashes_processed > 0) {
+      hashes.fetch_add(total_hashes_processed, std::memory_order_relaxed);
     }
   }
 }
@@ -1424,7 +1609,7 @@ void runMonitor(void *name)
   DEBUG_SERIAL_PRINTLN("[MONITOR] started");
   restoreStat();
 
-  unsigned long mLastCheck = 0;
+  uint32_t mLastCheck = 0;
 
   resetToFirstScreen();
 

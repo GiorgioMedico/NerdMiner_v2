@@ -23,12 +23,16 @@ unsigned long getNextId(std::atomic<unsigned long>& id)
 }
 
 //Verify Payload doesn't has zero length
-bool verifyPayload(const String& line) 
+bool verifyPayload(const char* line)
 {
-    if(line.length() == 0) return false;
-    String trimmed = line;
-    trimmed.trim();
-    return !trimmed.isEmpty();
+    if(!line || line[0] == '\0') return false;
+    // Check for non-whitespace content
+    while(*line) {
+        if(*line != ' ' && *line != '\t' && *line != '\n' && *line != '\r')
+            return true;
+        line++;
+    }
+    return false;
 }
 
 bool checkError(const StaticJsonDocument<BUFFER_JSON_DOC> &doc) 
@@ -68,9 +72,9 @@ bool tx_mining_subscribe(WiFiClient& client, mining_subscribe& mSubscribe)
     client.print(payload);
     
     vTaskDelay(200 / portTICK_PERIOD_MS); //Small delay
-    
+
     String line = client.readStringUntil('\n');
-    if(!parse_mining_subscribe(line, mSubscribe)) return false;
+    if(!parse_mining_subscribe(line.c_str(), mSubscribe)) return false;
 
   
     DEBUG_SERIAL_PRINT("    sub_details: "); DEBUG_SERIAL_PRINTLN(mSubscribe.sub_details);
@@ -85,7 +89,7 @@ bool tx_mining_subscribe(WiFiClient& client, mining_subscribe& mSubscribe)
     return true;
 }
 
-bool parse_mining_subscribe(const String& line, mining_subscribe& mSubscribe)
+bool parse_mining_subscribe(const char* line, mining_subscribe& mSubscribe)
 {
     if(!verifyPayload(line)) return false;
     DEBUG_SERIAL_PRINT("  Receiving: "); DEBUG_SERIAL_PRINTLN(line);
@@ -193,7 +197,7 @@ bool tx_mining_auth(WiFiClient& client, const char * user, const char * pass)
     return true;
 }
 
-stratum_method parse_mining_method(const String& line)
+stratum_method parse_mining_method(const char* line)
 {
     if(!verifyPayload(line)) return STRATUM_PARSE_ERROR;
     DEBUG_SERIAL_PRINT("  Receiving: "); DEBUG_SERIAL_PRINTLN(line);
@@ -238,7 +242,7 @@ stratum_method parse_mining_method(const String& line)
     return STRATUM_UNKNOWN;
 }
 
-bool parse_mining_notify(const String& line, mining_job& mJob)
+bool parse_mining_notify(const char* line, mining_job& mJob)
 {
     DEBUG_SERIAL_PRINTLN("    Parsing Method [MINING NOTIFY]");
     if(!verifyPayload(line)) return false;
@@ -444,7 +448,7 @@ bool tx_mining_submit(WiFiClient& client, mining_subscribe mWorker, mining_job m
     return true;
 }
 
-bool parse_mining_set_difficulty(const String& line, double& difficulty)
+bool parse_mining_set_difficulty(const char* line, double& difficulty)
 {
     DEBUG_SERIAL_PRINTLN("    Parsing Method [SET DIFFICULTY]");
     if(!verifyPayload(line)) return false;
@@ -490,7 +494,7 @@ bool tx_suggest_difficulty(WiFiClient& client, double difficulty)
 
 }
 
-unsigned long parse_extract_id(const String &line)
+unsigned long parse_extract_id(const char* line)
 {
     StaticJsonDocument<BUFFER_JSON_DOC> doc;
     DeserializationError error = deserializeJson(doc, line);

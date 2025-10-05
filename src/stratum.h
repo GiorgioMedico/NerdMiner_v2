@@ -69,20 +69,20 @@ bool checkError(const StaticJsonDocument<BUFFER_JSON_DOC> &doc);
 //Method Mining.subscribe
 mining_subscribe init_mining_subscribe(void);
 bool tx_mining_subscribe(WiFiClient& client, mining_subscribe& mSubscribe);
-bool parse_mining_subscribe(const String& line, mining_subscribe& mSubscribe);
+bool parse_mining_subscribe(const char* line, mining_subscribe& mSubscribe);
 
 //Method Mining.authorise
 bool tx_mining_auth(WiFiClient& client, const char * user, const char * pass);
-stratum_method parse_mining_method(const String& line);
-bool parse_mining_notify(const String& line, mining_job& mJob);
+stratum_method parse_mining_method(const char* line);
+bool parse_mining_notify(const char* line, mining_job& mJob);
 
 //Method Mining.submit
 bool tx_mining_submit(WiFiClient& client, mining_subscribe mWorker, mining_job mJob, unsigned long nonce, unsigned long &submit_id);
 
 //Difficulty Methods
 bool tx_suggest_difficulty(WiFiClient& client, double difficulty);
-bool parse_mining_set_difficulty(const String& line, double& difficulty);
+bool parse_mining_set_difficulty(const char* line, double& difficulty);
 
-unsigned long parse_extract_id(const String &line);
+unsigned long parse_extract_id(const char* line);
 
 #endif // STRATUM_API_H
