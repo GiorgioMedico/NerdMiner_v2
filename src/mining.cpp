@@ -129,14 +129,16 @@ bool checkPoolConnection(void)
 }
 
 // Helper: Handle 32-bit timestamp wraparound (occurs every ~49 days)
-static inline void adjust_for_wraparound(uint32_t now, uint32_t &old_time) {
+static inline void adjust_for_wraparound(uint32_t now, uint32_t &old_time) 
+{
   if (now < old_time) {
     old_time = now;
   }
 }
 
 // Helper: Calculate time difference with wraparound handling
-static inline uint32_t time_elapsed(uint32_t now, uint32_t start) {
+static inline uint32_t time_elapsed(uint32_t now, uint32_t start) 
+{
   return (now >= start) ? (now - start) : (UINT32_MAX - start + now);
 }
 
@@ -195,7 +197,6 @@ struct JobResult
 };
 
 static std::mutex s_job_mutex;
-static std::mutex s_submission_mutex;
 std::list<std::shared_ptr<JobRequest>> s_job_request_list_sw;
 #ifdef HARDWARE_SHA265
 std::list<std::shared_ptr<JobRequest>> s_job_request_list_hw;
@@ -227,7 +228,7 @@ struct Submission
   uint32_t timestamp_ms;  // Timestamp when submission was created (for timeout cleanup)
 };
 
-static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, std::shared_ptr<Submission>> &submission_map, std::mutex &submission_mutex)
+static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, std::shared_ptr<Submission>> &submission_map)
 {
   {
     std::lock_guard<std::mutex> lock(s_job_mutex);
@@ -240,11 +241,9 @@ static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, std::shared_ptr
   s_working_current_job_id.store(0xFF, std::memory_order_release);
   job_pool = 0xFFFFFFFF;
 
-  // Clear submission map under lock to prevent race conditions
-  {
-    std::lock_guard<std::mutex> sub_lock(submission_mutex);
-    submission_map.clear();
-  }
+  // Clear submission map
+  submission_map.clear();
+
 }
 
 #ifdef RANDOM_NONCE
@@ -293,7 +292,7 @@ void runStratumWorker(void *name)
       // WiFi is disconnected, so reconnect now
       mMonitor.NerdStatus.store(NM_Connecting, std::memory_order_release);
       s_client_connected.store(false, std::memory_order_release);
-      MiningJobStop(job_pool, s_submission_map, s_submission_mutex);
+      MiningJobStop(job_pool, s_submission_map);
       pending_len = 0; // Drop any partial data from the old socket
       WiFi.reconnect();
       vTaskDelay(5000 / portTICK_PERIOD_MS);
@@ -329,7 +328,7 @@ void runStratumWorker(void *name)
     {
       //If server is not reachable add random delay for connection retries
       //Generate value between 1 and 60 secs
-      MiningJobStop(job_pool, s_submission_map, s_submission_mutex);
+      MiningJobStop(job_pool, s_submission_map);
       vTaskDelay(((1 + rand() % 60) * 1000) / portTICK_PERIOD_MS);
       continue;
     }
@@ -350,7 +349,7 @@ void runStratumWorker(void *name)
         client.stop();
         cached_connected = false;  // Invalidate connection cache
         pending_len = 0;
-        MiningJobStop(job_pool, s_submission_map, s_submission_mutex);
+        MiningJobStop(job_pool, s_submission_map);
         continue;
       }
       
@@ -378,7 +377,7 @@ void runStratumWorker(void *name)
       cached_connected = false;  // Invalidate connection cache
       pending_len = 0;
       isMinerSuscribed.store(false, std::memory_order_release);
-      MiningJobStop(job_pool, s_submission_map, s_submission_mutex);
+      MiningJobStop(job_pool, s_submission_map);
       continue;
     }
 
@@ -393,7 +392,7 @@ void runStratumWorker(void *name)
         cached_connected = false;  // Invalidate connection cache
         pending_len = 0;
         isMinerSuscribed.store(false, std::memory_order_release);
-        MiningJobStop(job_pool, s_submission_map, s_submission_mutex);
+        MiningJobStop(job_pool, s_submission_map);
         continue;
       }
     }
@@ -457,7 +456,7 @@ void runStratumWorker(void *name)
         client.stop();
         cached_connected = false;  // Invalidate connection cache
         isMinerSuscribed.store(false, std::memory_order_release);
-        MiningJobStop(job_pool, s_submission_map, s_submission_mutex);
+        MiningJobStop(job_pool, s_submission_map);
         vTaskDelay(5000 / portTICK_PERIOD_MS); // Wait 5s before reconnecting
         break;
       }
@@ -610,7 +609,7 @@ void runStratumWorker(void *name)
                                         cached_connected = false;  // Invalidate connection cache
                                         pending_len = 0;
                                         isMinerSuscribed.store(false, std::memory_order_release);
-                                        MiningJobStop(job_pool, s_submission_map, s_submission_mutex);
+                                        MiningJobStop(job_pool, s_submission_map);
                                       }
                                       break;
           case MINING_SET_DIFFICULTY:{
@@ -622,7 +621,6 @@ void runStratumWorker(void *name)
                                       }
           case STRATUM_SUCCESS:       {
                                         unsigned long id = parse_extract_id(pending_buffer);
-                                        std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
                                         auto itt = s_submission_map.find(id);
                                         if (itt != s_submission_map.end())
                                         {
@@ -650,7 +648,6 @@ void runStratumWorker(void *name)
                                       break;
           case STRATUM_PARSE_ERROR:   {
                                         unsigned long id = parse_extract_id(pending_buffer);
-                                        std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
                                         auto itt = s_submission_map.find(id);
                                         if (itt != s_submission_map.end())
                                         {
@@ -801,7 +798,6 @@ void runStratumWorker(void *name)
           submission->isValid = false;
 
         {
-          std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
 
           // Check for ID collision (rare but possible after wraparound)
           auto existing = s_submission_map.find(sumbit_id);

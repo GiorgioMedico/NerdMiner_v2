@@ -7,7 +7,6 @@
 #include <cmath>
 #include <list>
 #include <atomic>
-#include <mutex>
 #include "mining.h"
 #include "utils.h"
 #include "monitor.h"
@@ -176,7 +175,6 @@ mining_data getMiningData(unsigned long mElapsed)
 {
   mining_data data;
 
-  // bestDiff - use temp buffer for suffix_string (read with mutex)
   char bestDiffBuf[16];
   suffix_string(best_diff.load(std::memory_order_relaxed), bestDiffBuf, sizeof(bestDiffBuf), 0);
   data.bestDiff = bestDiffBuf;
