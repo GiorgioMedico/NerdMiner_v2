@@ -885,11 +885,7 @@ void minerWorkerSw(void * task_id)
         if (s_job_result_list.size() < RESULT_LIST_SIZE) 
         {
             s_job_result_list.push_back(result);
-            DEBUG_SERIAL_PRINTF("[RESULT] ✅ Diff: %.8f | Nonce: %u | Stored (%u/%u)\n", result->difficulty, result->nonce, (unsigned)s_job_result_list.size(), RESULT_LIST_SIZE);
-        } 
-        else 
-        {
-            DEBUG_SERIAL_PRINTF("[WARNING] ⚠️ Diff: %.8f | Nonce: %u | List full!\n", result->difficulty, result->nonce);
+            // DEBUG_SERIAL_PRINTF("[RESULT] ✅ Diff: %.8f | Nonce: %u | Stored (%u/%u)\n", result->difficulty, result->nonce, (unsigned)s_job_result_list.size(), RESULT_LIST_SIZE);
         }
 
         result.reset();
@@ -916,7 +912,7 @@ void minerWorkerSw(void * task_id)
         if (nerd_sha256d_baked_nonce(job->midstate, job->bake, __builtin_bswap32(nonce), hash))
         {
           double diff_hash = diff_from_target(hash);
-          DEBUG_SERIAL_PRINTF("[DIFFICULTY] Diff: %.8f | Nonce: %u \n", diff_hash, nonce);
+          // DEBUG_SERIAL_PRINTF("[DIFFICULTY] Diff: %.8f | Nonce: %u \n", diff_hash, nonce);
           if (diff_hash > result->difficulty)
           {
             result->difficulty = diff_hash;
@@ -935,7 +931,7 @@ void minerWorkerSw(void * task_id)
       vTaskDelay(10 / portTICK_PERIOD_MS);
 
     wdt_counter++;
-    if (wdt_counter >= 20)
+    if (wdt_counter >= 8)
     {
       wdt_counter = 0;
       esp_task_wdt_reset();
@@ -1146,6 +1142,8 @@ void minerWorkerHw(void * task_id)
         sha_ll_load(SHA2_256);
         if (!nerd_sha_hal_wait_idle()) {
           // Reset SHA hardware to known state after timeout
+          DEBUG_SERIAL_PRINTF("[SHA_HW] Timeout at nonce 0x%08X (job %u, round 1, worker %u)\n",
+                              n, job->id, miner_id);
           nerd_sha_hw_reset();
           result->nonces_skipped++;
           continue;
@@ -1156,6 +1154,8 @@ void minerWorkerHw(void * task_id)
         sha_ll_load(SHA2_256);
         if (!nerd_sha_hal_wait_idle()) {
           // Reset SHA hardware to known state after timeout
+          DEBUG_SERIAL_PRINTF("[SHA_HW] Timeout at nonce 0x%08X (job %u, round 2, worker %u)\n",
+                              n, job->id, miner_id);
           nerd_sha_hw_reset();
           result->nonces_skipped++;
           continue;
@@ -1389,6 +1389,8 @@ void minerWorkerHw(void * task_id)
         //sha_hal_hash_block(SHA2_256, s_test_buffer+64, 64/4, false);
         if (!nerd_sha_hal_wait_idle()) {
           // Reset SHA hardware to known state after timeout
+          DEBUG_SERIAL_PRINTF("[SHA_HW_ESP32] Timeout at nonce 0x%08X (job %u, stage 1, worker %u)\n",
+                              job->nonce_start+n, job->id, miner_id);
           nerd_sha_hw_reset();
           result->nonces_skipped++;
           continue;
@@ -1398,6 +1400,8 @@ void minerWorkerHw(void * task_id)
 
         if (!nerd_sha_hal_wait_idle()) {
           // Reset SHA hardware to known state after timeout
+          DEBUG_SERIAL_PRINTF("[SHA_HW_ESP32] Timeout at nonce 0x%08X (job %u, stage 2, worker %u)\n",
+                              job->nonce_start+n, job->id, miner_id);
           nerd_sha_hw_reset();
           result->nonces_skipped++;
           continue;
@@ -1407,6 +1411,8 @@ void minerWorkerHw(void * task_id)
         //sha_hal_hash_block(SHA2_256, interResult, 64/4, true);
         if (!nerd_sha_hal_wait_idle()) {
           // Reset SHA hardware to known state after timeout
+          DEBUG_SERIAL_PRINTF("[SHA_HW_ESP32] Timeout at nonce 0x%08X (job %u, stage 3, worker %u)\n",
+                              job->nonce_start+n, job->id, miner_id);
           nerd_sha_hw_reset();
           result->nonces_skipped++;
           continue;
@@ -1416,6 +1422,8 @@ void minerWorkerHw(void * task_id)
 
         if (!nerd_sha_hal_wait_idle()) {
           // Reset SHA hardware to known state after timeout
+          DEBUG_SERIAL_PRINTF("[SHA_HW_ESP32] Timeout at nonce 0x%08X (job %u, stage 4, worker %u)\n",
+                              job->nonce_start+n, job->id, miner_id);
           nerd_sha_hw_reset();
           result->nonces_skipped++;
           continue;
