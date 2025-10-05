@@ -31,7 +31,7 @@
 #define RANDOM_NONCE
 
 
-#ifdef HARDWARE_SHA265
+#ifdef HARDWARE_SHA256
 #include <sha/sha_dma.h>
 #include <hal/sha_hal.h>
 #include <hal/sha_ll.h>
@@ -198,7 +198,7 @@ struct JobResult
 
 static std::mutex s_job_mutex;
 std::list<std::shared_ptr<JobRequest>> s_job_request_list_sw;
-#ifdef HARDWARE_SHA265
+#ifdef HARDWARE_SHA256
 std::list<std::shared_ptr<JobRequest>> s_job_request_list_hw;
 #endif
 std::list<std::shared_ptr<JobResult>> s_job_result_list;
@@ -234,7 +234,7 @@ static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, std::shared_ptr
     std::lock_guard<std::mutex> lock(s_job_mutex);
     s_job_result_list.clear();
     s_job_request_list_sw.clear();
-    #ifdef HARDWARE_SHA265
+    #ifdef HARDWARE_SHA256
     s_job_request_list_hw.clear();
     #endif
   }
@@ -523,7 +523,7 @@ void runStratumWorker(void *name)
                                           {
                                             std::lock_guard<std::mutex> lock(s_job_mutex);
                                             s_job_request_list_sw.clear();
-                                            #ifdef HARDWARE_SHA265
+                                            #ifdef HARDWARE_SHA256
                                             s_job_request_list_hw.clear();
                                             #endif
                                           }
@@ -551,7 +551,7 @@ void runStratumWorker(void *name)
                                           nerd_mids(diget_mid, mMiner.bytearray_blockheader);
                                           nerd_sha256_bake(diget_mid, mMiner.bytearray_blockheader+64, bake);
 
-                                          #ifdef HARDWARE_SHA265
+                                          #ifdef HARDWARE_SHA256
                                           #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3)
                                             esp_sha_acquire_hardware();
                                             sha_hal_hash_block(SHA2_256,  mMiner.bytearray_blockheader, 64/4, true);
@@ -574,7 +574,7 @@ void runStratumWorker(void *name)
 
                                           // Prepare jobs outside lock to reduce mutex hold time
                                           std::list<std::shared_ptr<JobRequest>> new_sw_jobs;
-                                          #ifdef HARDWARE_SHA265
+                                          #ifdef HARDWARE_SHA256
                                           std::list<std::shared_ptr<JobRequest>> new_hw_jobs;
                                           #endif
 
@@ -584,7 +584,7 @@ void runStratumWorker(void *name)
                                             JobPush(new_sw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_SW, currentPoolDifficulty, mMiner.bytearray_blockheader, diget_mid, bake);
                                             nonce_pool += NONCE_PER_JOB_SW;  // Sequential increment (wraparound automatic)
                                             #endif
-                                            #ifdef HARDWARE_SHA265
+                                            #ifdef HARDWARE_SHA256
                                               #if defined(CONFIG_IDF_TARGET_ESP32)
                                                 JobPush(new_hw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, sha_buffer_swap, hw_midstate, bake);
                                               #else
@@ -598,7 +598,7 @@ void runStratumWorker(void *name)
                                           {
                                             std::lock_guard<std::mutex> lock(s_job_mutex);
                                             s_job_request_list_sw.splice(s_job_request_list_sw.end(), new_sw_jobs);
-                                            #ifdef HARDWARE_SHA265
+                                            #ifdef HARDWARE_SHA256
                                             s_job_request_list_hw.splice(s_job_request_list_hw.end(), new_hw_jobs);
                                             #endif
                                           }
@@ -674,7 +674,7 @@ void runStratumWorker(void *name)
       std::lock_guard<std::mutex> lock(s_job_mutex);
       bool has_pending_results = !s_job_result_list.empty();
       bool sw_queue_low = s_job_request_list_sw.size() < JOB_QUEUE_SIZE / 2;
-      #ifdef HARDWARE_SHA265
+      #ifdef HARDWARE_SHA256
       bool hw_queue_low = s_job_request_list_hw.size() < JOB_QUEUE_SIZE / 2;
       #else
       bool hw_queue_low = false;
@@ -697,7 +697,7 @@ void runStratumWorker(void *name)
     {
       // Prepare jobs outside lock to minimize contention
       std::list<std::shared_ptr<JobRequest>> new_jobs_sw;
-      #ifdef HARDWARE_SHA265
+      #ifdef HARDWARE_SHA256
       std::list<std::shared_ptr<JobRequest>> new_jobs_hw;
       #endif
 
@@ -706,7 +706,7 @@ void runStratumWorker(void *name)
         // Quick check of queue sizes
         std::lock_guard<std::mutex> lock(s_job_mutex);
         current_sw_size = s_job_request_list_sw.size();
-        #ifdef HARDWARE_SHA265
+        #ifdef HARDWARE_SHA256
         current_hw_size = s_job_request_list_hw.size();
         #endif
       }
@@ -724,7 +724,7 @@ void runStratumWorker(void *name)
         }
       }
 
-      #ifdef HARDWARE_SHA265
+      #ifdef HARDWARE_SHA256
       // Incremental refill HW: Create jobs outside lock
       constexpr size_t REFILL_THRESHOLD_HW = JOB_QUEUE_SIZE / 2;
       if (current_hw_size < REFILL_THRESHOLD_HW)
@@ -752,7 +752,7 @@ void runStratumWorker(void *name)
         if (!new_jobs_sw.empty()) {
           s_job_request_list_sw.splice(s_job_request_list_sw.end(), new_jobs_sw);
         }
-        #ifdef HARDWARE_SHA265
+        #ifdef HARDWARE_SHA256
         if (!new_jobs_hw.empty()) {
           s_job_request_list_hw.splice(s_job_request_list_hw.end(), new_jobs_hw);
         }
@@ -943,7 +943,7 @@ void minerWorkerSw(void * task_id)
   }
 }
 
-#ifdef HARDWARE_SHA265
+#ifdef HARDWARE_SHA256
 
 #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3)
 
@@ -1453,7 +1453,7 @@ void minerWorkerHw(void * task_id)
 
 #endif  //CONFIG_IDF_TARGET_ESP32
 
-#endif  //HARDWARE_SHA265
+#endif  //HARDWARE_SHA256
 
 
 #define DELAY 2000  // Reduced from 1000ms to 2000ms (1Hz -> 0.5Hz) to save CPU cycles for mining

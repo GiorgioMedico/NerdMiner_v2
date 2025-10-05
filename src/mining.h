@@ -22,8 +22,8 @@
 #define SUBMISSION_MAP_MAX       16
 
 //#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3)
-#ifndef HARDWARE_SHA265
-#define HARDWARE_SHA265
+#ifndef HARDWARE_SHA256
+#define HARDWARE_SHA256
 #endif
 //#endif
 

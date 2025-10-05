@@ -1647,7 +1647,7 @@ void setup() {
     Serial.println("Test Mode: SIMPLE TEST");
     #elif defined(SHA256_TEST)
     Serial.println("Test Mode: SHA256 HARDWARE TEST");
-    #ifdef HARDWARE_SHA265
+    #ifdef HARDWARE_SHA256
     Serial.println("Hardware SHA256 acceleration: ENABLED");
     #else
     Serial.println("Hardware SHA256 acceleration: DISABLED (Software fallback)");

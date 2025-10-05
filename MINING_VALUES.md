@@ -109,7 +109,7 @@ This document provides a comprehensive reference of all important mining-related
 - **Tracking**: Timeout events are counted in `sha_timeout_count` atomic variable
 - **Recovery**: After timeout, hardware is reset via `nerd_sha_hw_reset()` and nonce is skipped
 
-### `HARDWARE_SHA265`
+### `HARDWARE_SHA256`
 - **Value**: Defined (enabled by default)
 - **Location**: `src/mining.h:25-27`
 - **Type**: Preprocessor macro

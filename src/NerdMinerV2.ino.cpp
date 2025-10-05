@@ -165,7 +165,7 @@ void setup()
   // Start mining tasks - HW pinned to Core 0, SW unpinned to fill gaps
   //BaseType_t res = xTaskCreate(runWorker, name, 35000, (void*)name, 1, NULL);
   TaskHandle_t minerTask1, minerTask2 = NULL;
-  #ifdef HARDWARE_SHA265
+  #ifdef HARDWARE_SHA256
     #if defined(CONFIG_IDF_TARGET_ESP32)
     xTaskCreatePinnedToCore(minerWorkerHw, "MinerHw-0", 3584, (void*)0, 3, &minerTask1, 0); // HW miner pinned to Core 0, Priority 3
     //xTaskCreate(minerWorkerSw, "MinerSw-0", 5000, (void*)0, 2, &minerTask1); // Reduced for ESP32 classic

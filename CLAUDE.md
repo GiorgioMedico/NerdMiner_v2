@@ -41,7 +41,7 @@ pio test
 **Key Modules**
 
 1. **Mining Engine** (`src/mining.cpp/.h`)
-   - Hardware SHA256 acceleration when available (`HARDWARE_SHA265`)
+   - Hardware SHA256 acceleration when available (`HARDWARE_SHA256`)
    - Software fallback for unsupported chips
    - Dual-core mining with work distribution
    - Target/difficulty management
@@ -159,7 +159,7 @@ pio test
 **Build Flags**
 - Optimization: `-O3`, `-ffast-math`, `-funroll-loops`
 - Memory optimization: `-ffunction-sections`, `-fdata-sections`, `-fomit-frame-pointer`, `-Wl,--gc-sections`
-- Critical defines: `HARDWARE_SHA265` (SHA256 acceleration), `DEBUG_MINING` (debug output)
+- Critical defines: `HARDWARE_SHA256` (SHA256 acceleration), `DEBUG_MINING` (debug output)
 - Board-specific: `NERDMINERV2`, `M5STICK_C`, `ESP32_2432S028R`, etc.
 
 **Build Scripts**
