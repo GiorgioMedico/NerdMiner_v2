@@ -613,8 +613,13 @@ void runStratumWorker(void *name)
                                         MiningJobStop(job_pool, s_submission_map, s_submission_mutex);
                                       }
                                       break;
-          case MINING_SET_DIFFICULTY: parse_mining_set_difficulty(pending_buffer, currentPoolDifficulty);
+          case MINING_SET_DIFFICULTY:{
+                                      // Useless because i am working in a solo pool, i use this method only for keep alive the connection
+                                      double set_difficulty = 0.0;
+                                      parse_mining_set_difficulty(pending_buffer, set_difficulty);
+                                      DEBUG_SERIAL_PRINTF("Mining set difficulty %f \n", set_difficulty);
                                       break;
+                                      }
           case STRATUM_SUCCESS:       {
                                         unsigned long id = parse_extract_id(pending_buffer);
                                         std::lock_guard<std::mutex> sub_lock(s_submission_mutex);
@@ -623,8 +628,14 @@ void runStratumWorker(void *name)
                                         {
                                           // Update best_diff if new difficulty is higher (single writer, safe without CAS)
                                           float current = best_diff.load(std::memory_order_relaxed);
-                                          if (itt->second->diff > current) {
+                                          if (itt->second->diff > current) 
+                                          {
                                             best_diff.store(itt->second->diff, std::memory_order_relaxed);
+                                          }
+                                          // Also update pool difficulty - pool accepting this share means it met the current target
+                                          if (itt->second->diff > currentPoolDifficulty) 
+                                          {
+                                            currentPoolDifficulty = itt->second->diff;
                                           }
                                           if (itt->second->is32bit)
                                             shares.fetch_add(1, std::memory_order_relaxed);
@@ -643,12 +654,12 @@ void runStratumWorker(void *name)
                                         auto itt = s_submission_map.find(id);
                                         if (itt != s_submission_map.end())
                                         {
-                                          DEBUG_SERIAL_PRINTF("Pool refused submission %d (line: %.100s)\n", id, pending_buffer);
+                                          DEBUG_SERIAL_PRINTF("[ERROR] Pool refused submission %d (line: %.100s)\n", id, pending_buffer);
                                           s_submission_map.erase(itt);
                                         }
                                       }
                                       break;
-          default:                    DEBUG_SERIAL_PRINTLN("  Parsed JSON: unknown"); break;
+          default:                    DEBUG_SERIAL_PRINTLN("Parsed JSON: unknown\n"); break;
 
       }
 
@@ -761,7 +772,8 @@ void runStratumWorker(void *name)
       job_result_list.pop_front();
 
       // Only count actually processed nonces in hashrate (skipped nonces weren't computed)
-      if (res->nonce_count > res->nonces_skipped) {
+      if (res->nonce_count > res->nonces_skipped) 
+      {
         total_hashes_processed += (res->nonce_count - res->nonces_skipped);
       }
       if (res->difficulty > currentPoolDifficulty && job_pool == res->id && res->nonce != 0xFFFFFFFF)
@@ -874,8 +886,16 @@ void minerWorkerSw(void * task_id)
       std::lock_guard<std::mutex> lock(s_job_mutex);
       if (result)
       {
-        if (s_job_result_list.size() < RESULT_LIST_SIZE)
-          s_job_result_list.push_back(result);
+        if (s_job_result_list.size() < RESULT_LIST_SIZE) 
+        {
+            s_job_result_list.push_back(result);
+            DEBUG_SERIAL_PRINTF("[RESULT] ✅ Diff: %.8f | Nonce: %u | Stored (%u/%u)\n", result->difficulty, result->nonce, (unsigned)s_job_result_list.size(), RESULT_LIST_SIZE);
+        } 
+        else 
+        {
+            DEBUG_SERIAL_PRINTF("[WARNING] ⚠️ Diff: %.8f | Nonce: %u | List full!\n", result->difficulty, result->nonce);
+        }
+
         result.reset();
       }
       if (!s_job_request_list_sw.empty())
@@ -900,6 +920,7 @@ void minerWorkerSw(void * task_id)
         if (nerd_sha256d_baked_nonce(job->midstate, job->bake, __builtin_bswap32(nonce), hash))
         {
           double diff_hash = diff_from_target(hash);
+          DEBUG_SERIAL_PRINTF("[DIFFICULTY] Diff: %.8f | Nonce: %u \n", diff_hash, nonce);
           if (diff_hash > result->difficulty)
           {
             result->difficulty = diff_hash;
@@ -918,7 +939,7 @@ void minerWorkerSw(void * task_id)
       vTaskDelay(10 / portTICK_PERIOD_MS);
 
     wdt_counter++;
-    if (wdt_counter >= 8)
+    if (wdt_counter >= 20)
     {
       wdt_counter = 0;
       esp_task_wdt_reset();
@@ -1506,7 +1527,8 @@ void restoreStat()
   }
 }
 
-void saveStat() {
+void saveStat() 
+{
   if(!Settings.saveStats) return;
   DEBUG_SERIAL_PRINTF("[MONITOR] Saving stats\n");
 
