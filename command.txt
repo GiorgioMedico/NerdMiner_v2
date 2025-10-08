@@ -4,4 +4,4 @@ pio run -e ESP32-2432S028R -t upload
 pio run -e ESP32-2432S028R -t upload --upload-port /dev/ttyUSB0
 pio run -e ESP32-2432S028R -t upload --upload-port /dev/ttyUSB1
 
-pio test -e test_ESP32-2432S028R
+pio test -e test_ESP32-2432S028R --upload-port /dev/ttyUSB0

@@ -7,12 +7,13 @@ This document provides a comprehensive reference of all important mining-related
 ## Table of Contents
 1. [Mining Performance Constants](#mining-performance-constants)
 2. [Difficulty & Target Configuration](#difficulty--target-configuration)
-3. [Timing & Timeout Values](#timing--timeout-values)
-4. [SHA256 Hardware Configuration](#sha256-hardware-configuration)
-5. [Queue & Buffer Sizes](#queue--buffer-sizes)
-6. [Nonce Start Values](#nonce-start-values)
-7. [Global Mining Statistics](#global-mining-statistics)
-8. [Critical Data Structures](#critical-data-structures)
+3. [Hash Endianness](#hash-endianness)
+4. [Timing & Timeout Values](#timing--timeout-values)
+5. [SHA256 Hardware Configuration](#sha256-hardware-configuration)
+6. [Queue & Buffer Sizes](#queue--buffer-sizes)
+7. [Nonce Start Values](#nonce-start-values)
+8. [Global Mining Statistics](#global-mining-statistics)
+9. [Critical Data Structures](#critical-data-structures)
 
 ---
 
@@ -66,6 +67,43 @@ This document provides a comprehensive reference of all important mining-related
 - **Type**: Unsigned 32-bit integer
 - **Description**: Reference target nonce value, possibly used for testing or difficulty calculations.
 - **Impact**: Primarily used for validation and testing purposes.
+
+---
+
+## Hash Endianness
+
+### Little-Endian Hash Representation
+
+**Overview**: The NerdMiner v2 codebase consistently treats the 32-byte double-SHA256 hash result as little-endian byte order throughout all mining operations. This ensures compatibility with Bitcoin's internal hash representation while maintaining efficient hardware acceleration.
+
+**Key Components**:
+
+#### `checkValid` Function (`src/utils.cpp:171-201`)
+- **Input**: 32-byte SHA256 hash (little-endian), 32-byte difficulty target (big-endian from stratum)
+- **Process**: Reverses the big-endian stratum target to little-endian for comparison
+- **Comparison**: Compares hashes from most-significant byte (index 31) to least-significant byte (index 0)
+- **Purpose**: Validates if hash meets difficulty target in little-endian byte order
+
+#### `le256todouble` Function (`src/utils.cpp:115-135`)
+- **Input**: 256-bit hash buffer stored LSB-first (little-endian)
+- **Process**: Reads most-significant limb from offset 24, most-significant from offset 0
+- **Output**: Converts to double-precision floating point for difficulty calculations
+- **Usage**: Used in `diff_from_target()` for both software and hardware mining loops
+
+#### Runtime Share Validation (`src/mining.cpp:682-686`)
+- **Check**: Flags shares as 32-bit only if bytes 28-29 are zero
+- **Rationale**: In little-endian layout, bytes 28-29 represent the highest-order bits
+- **Purpose**: Identifies exceptionally rare shares with 32 bits of leading zeros
+
+#### Hardware/Software Digest Agreement (`src/mining.cpp:839-874, 1012-1025`)
+- **Hardware**: ESP32 SHA registers output directly in little-endian byte order
+- **Software**: `nerd_sha256d_baked_nonce` produces little-endian results
+- **Validation**: Optional byte-for-byte comparison ensures consistency
+- **Purpose**: Guarantees hardware acceleration matches software fallback
+
+**Network Serialization**: When transmitting hashes over the network (stratum protocol), reverse byte order to big-endian format as required by Bitcoin network standards.
+
+**Consistency**: All internal hash operations, difficulty calculations, and validations use little-endian representation for optimal performance with ESP32 hardware.
 
 ---
 
@@ -580,6 +618,6 @@ Enable these in your build for additional diagnostics:
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: 2025-10-02
+**Document Version**: 1.1
+**Last Updated**: 2025-10-08
 **Codebase Version**: Based on commit 8adfe5b
