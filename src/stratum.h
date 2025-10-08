@@ -63,7 +63,7 @@ typedef enum {
 } stratum_error;
 
 unsigned long getNextId(std::atomic<unsigned long>& id);
-bool verifyPayload (const String& line);
+bool verifyPayload (const char* line);
 bool checkError(const StaticJsonDocument<BUFFER_JSON_DOC> &doc);
 
 //Method Mining.subscribe
@@ -77,7 +77,7 @@ stratum_method parse_mining_method(const char* line);
 bool parse_mining_notify(const char* line, mining_job& mJob);
 
 //Method Mining.submit
-bool tx_mining_submit(WiFiClient& client, mining_subscribe mWorker, mining_job mJob, unsigned long nonce, unsigned long &submit_id);
+bool tx_mining_submit(WiFiClient& client, const char* worker_name, const char* job_id, const char* extranonce2, const char* ntime, unsigned long nonce, unsigned long &submit_id);
 
 //Difficulty Methods
 bool tx_suggest_difficulty(WiFiClient& client, double difficulty);

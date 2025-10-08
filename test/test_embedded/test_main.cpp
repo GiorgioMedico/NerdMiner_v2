@@ -248,20 +248,29 @@ void test_miner_data_structure() {
 void test_stratum_get_next_id() {
     Serial.println("\n=== Testing Stratum ID Generation ===");
 
-    // Test normal increment
+    // Test 1: Basic functionality - getNextId returns current value and increments atomic
+    Serial.println("  Test 1: Basic increment from 1");
     std::atomic<unsigned long> test_id(1);
-    unsigned long next_id = getNextId(test_id);
-    TEST_ASSERT_EQUAL_UINT32(2, next_id);
+    unsigned long returned_id = getNextId(test_id);
+    TEST_ASSERT_EQUAL_UINT32(1, returned_id); // Returns the current value (1)
+    TEST_ASSERT_EQUAL_UINT32(2, test_id.load()); // Atomic is incremented to 2
+    Serial.println("    ✓ Returns 1, increments to 2");
 
-    // Test another increment
+    // Test 2: Test with different starting value
+    Serial.println("  Test 2: Increment from 100");
     test_id = 100;
-    next_id = getNextId(test_id);
-    TEST_ASSERT_EQUAL_UINT32(101, next_id);
+    returned_id = getNextId(test_id);
+    TEST_ASSERT_EQUAL_UINT32(100, returned_id); // Returns current value (100)
+    TEST_ASSERT_EQUAL_UINT32(101, test_id.load()); // Atomic is incremented to 101
+    Serial.println("    ✓ Returns 100, increments to 101");
 
-    // Test rollover at ULONG_MAX
+    // Test 3: Test wraparound at ULONG_MAX (unsigned long overflow)
+    Serial.println("  Test 3: Wraparound at ULLONG_MAX");
     test_id = ULONG_MAX;
-    next_id = getNextId(test_id);
-    TEST_ASSERT_EQUAL_UINT32(1, next_id);
+    returned_id = getNextId(test_id);
+    TEST_ASSERT_EQUAL_UINT32(ULONG_MAX, returned_id); // Returns current value (ULLONG_MAX)
+    TEST_ASSERT_EQUAL_UINT32(0, test_id.load()); // Atomic wraps to 0
+    Serial.println("    ✓ Returns ULLONG_MAX, wraps to 0");
 
     Serial.println("✓ Stratum ID generation tests passed");
 }
@@ -271,22 +280,22 @@ void test_stratum_verify_payload() {
 
     // Test valid payload
     String valid_payload = "{\"id\":1,\"method\":\"mining.notify\"}";
-    bool result = verifyPayload(valid_payload);
+    bool result = verifyPayload(valid_payload.c_str());
     TEST_ASSERT_TRUE(result);
 
     // Test empty payload
     String empty_payload = "";
-    result = verifyPayload(empty_payload);
+    result = verifyPayload(empty_payload.c_str());
     TEST_ASSERT_FALSE(result);
 
     // Test whitespace only payload
     String whitespace_payload = "   \t\n   ";
-    result = verifyPayload(whitespace_payload);
+    result = verifyPayload(whitespace_payload.c_str());
     TEST_ASSERT_FALSE(result);
 
     // Test payload with leading/trailing whitespace
     String trimmed_payload = "  {\"id\":1}  ";
-    result = verifyPayload(trimmed_payload);
+    result = verifyPayload(trimmed_payload.c_str());
     TEST_ASSERT_TRUE(result);
     // Note: verifyPayload no longer modifies the input (const reference)
     // Original string remains unchanged
@@ -318,32 +327,32 @@ void test_stratum_method_parsing() {
 
     // Test mining.notify method
     String notify_json = "{\"id\":null,\"method\":\"mining.notify\",\"params\":[]}";
-    stratum_method method = parse_mining_method(notify_json);
+    stratum_method method = parse_mining_method(notify_json.c_str());
     TEST_ASSERT_EQUAL_INT(MINING_NOTIFY, method);
 
     // Test mining.set_difficulty method
     String difficulty_json = "{\"id\":null,\"method\":\"mining.set_difficulty\",\"params\":[0.5]}";
-    method = parse_mining_method(difficulty_json);
+    method = parse_mining_method(difficulty_json.c_str());
     TEST_ASSERT_EQUAL_INT(MINING_SET_DIFFICULTY, method);
 
     // Test success response (no method field, error is null)
     String success_json = "{\"id\":1,\"result\":true,\"error\":null}";
-    method = parse_mining_method(success_json);
+    method = parse_mining_method(success_json.c_str());
     TEST_ASSERT_EQUAL_INT(STRATUM_SUCCESS, method);
 
     // Test unknown method
     String unknown_json = "{\"id\":1,\"method\":\"unknown.method\",\"params\":[]}";
-    method = parse_mining_method(unknown_json);
+    method = parse_mining_method(unknown_json.c_str());
     TEST_ASSERT_EQUAL_INT(STRATUM_UNKNOWN, method);
 
     // Test malformed JSON
     String malformed_json = "{\"id\":1,\"method\":\"mining.notify\""; // Missing closing brace
-    method = parse_mining_method(malformed_json);
+    method = parse_mining_method(malformed_json.c_str());
     TEST_ASSERT_EQUAL_INT(STRATUM_PARSE_ERROR, method);
 
     // Test empty payload
     String empty_json = "";
-    method = parse_mining_method(empty_json);
+    method = parse_mining_method(empty_json.c_str());
     TEST_ASSERT_EQUAL_INT(STRATUM_PARSE_ERROR, method);
 
     Serial.println("✓ Stratum method parsing tests passed");
@@ -374,22 +383,22 @@ void test_stratum_extract_id() {
 
     // Test valid ID extraction
     String json_with_id = "{\"id\":12345,\"result\":true}";
-    unsigned long extracted_id = parse_extract_id(json_with_id);
+    unsigned long extracted_id = parse_extract_id(json_with_id.c_str());
     TEST_ASSERT_EQUAL_UINT32(12345, extracted_id);
 
     // Test ID extraction with different value
     String json_with_id2 = "{\"error\":null,\"id\":999,\"method\":\"test\"}";
-    extracted_id = parse_extract_id(json_with_id2);
+    extracted_id = parse_extract_id(json_with_id2.c_str());
     TEST_ASSERT_EQUAL_UINT32(999, extracted_id);
 
     // Test missing ID field
     String json_no_id = "{\"result\":true,\"error\":null}";
-    extracted_id = parse_extract_id(json_no_id);
+    extracted_id = parse_extract_id(json_no_id.c_str());
     TEST_ASSERT_EQUAL_UINT32(0, extracted_id);
 
     // Test malformed JSON
     String malformed_json = "{\"id\":123"; // Missing closing brace
-    extracted_id = parse_extract_id(malformed_json);
+    extracted_id = parse_extract_id(malformed_json.c_str());
     TEST_ASSERT_EQUAL_UINT32(0, extracted_id);
 
     Serial.println("✓ ID extraction tests passed");
@@ -424,7 +433,7 @@ void test_stratum_parse_mining_subscribe() {
     String valid_response = "{\"id\":1,\"result\":[[[\"mining.set_difficulty\",\"00000001\"],[\"mining.notify\",\"00000002\"]],\"08000002\",4],\"error\":null}";
     mining_subscribe mSub;
 
-    bool result = parse_mining_subscribe(valid_response, mSub);
+    bool result = parse_mining_subscribe(valid_response.c_str(), mSub);
 
     TEST_ASSERT_TRUE(result);
     TEST_ASSERT_EQUAL_STRING("00000001", mSub.sub_details.c_str());
@@ -438,14 +447,14 @@ void test_stratum_parse_mining_subscribe() {
     // Test with empty extranonce1 (should fail validation)
     String invalid_response = "{\"id\":1,\"result\":[[[\"mining.set_difficulty\",\"00000001\"]],\"\",4],\"error\":null}";
     mining_subscribe mSub2;
-    result = parse_mining_subscribe(invalid_response, mSub2);
+    result = parse_mining_subscribe(invalid_response.c_str(), mSub2);
     // Function returns true but caller checks extranonce1.length()
     TEST_ASSERT_EQUAL_INT(0, mSub2.extranonce1.length());
 
     // Test malformed JSON
     String malformed = "{\"id\":1,\"result\":[";
     mining_subscribe mSub3;
-    result = parse_mining_subscribe(malformed, mSub3);
+    result = parse_mining_subscribe(malformed.c_str(), mSub3);
     TEST_ASSERT_FALSE(result);
 
     Serial.println("✓ Parse mining subscribe tests passed");
@@ -458,7 +467,7 @@ void test_stratum_parse_mining_set_difficulty() {
     String valid_diff = "{\"id\":null,\"method\":\"mining.set_difficulty\",\"params\":[0.5]}";
     double difficulty = 0.0;
 
-    bool result = parse_mining_set_difficulty(valid_diff, difficulty);
+    bool result = parse_mining_set_difficulty(valid_diff.c_str(), difficulty);
 
     TEST_ASSERT_TRUE(result);
     TEST_ASSERT_EQUAL_DOUBLE(0.5, difficulty);
@@ -466,24 +475,24 @@ void test_stratum_parse_mining_set_difficulty() {
 
     // Test with different difficulty
     String valid_diff2 = "{\"id\":null,\"method\":\"mining.set_difficulty\",\"params\":[1024.0]}";
-    result = parse_mining_set_difficulty(valid_diff2, difficulty);
+    result = parse_mining_set_difficulty(valid_diff2.c_str(), difficulty);
     TEST_ASSERT_TRUE(result);
     TEST_ASSERT_EQUAL_DOUBLE(1024.0, difficulty);
 
     // Test with very small difficulty
     String valid_diff3 = "{\"id\":null,\"method\":\"mining.set_difficulty\",\"params\":[0.00015]}";
-    result = parse_mining_set_difficulty(valid_diff3, difficulty);
+    result = parse_mining_set_difficulty(valid_diff3.c_str(), difficulty);
     TEST_ASSERT_TRUE(result);
     TEST_ASSERT_EQUAL_DOUBLE(0.00015, difficulty);
 
     // Test malformed JSON
     String malformed = "{\"params\":[";
-    result = parse_mining_set_difficulty(malformed, difficulty);
+    result = parse_mining_set_difficulty(malformed.c_str(), difficulty);
     TEST_ASSERT_FALSE(result);
 
     // Test missing params
     String no_params = "{\"id\":null,\"method\":\"mining.set_difficulty\"}";
-    result = parse_mining_set_difficulty(no_params, difficulty);
+    result = parse_mining_set_difficulty(no_params.c_str(), difficulty);
     TEST_ASSERT_FALSE(result);
 
     Serial.println("✓ Parse mining set difficulty tests passed");
@@ -507,7 +516,7 @@ void test_stratum_parse_mining_notify() {
 
     mining_job mJob;
     mJob.merkle_branch_len = 0;
-    bool result = parse_mining_notify(valid_notify, mJob);
+    bool result = parse_mining_notify(valid_notify.c_str(), mJob);
 
     TEST_ASSERT_TRUE(result);
     TEST_ASSERT_EQUAL_STRING("job1", mJob.job_id.c_str());
@@ -539,7 +548,7 @@ void test_stratum_parse_mining_notify() {
         "]}";
 
     mining_job mJob2;
-    result = parse_mining_notify(notify_with_merkle, mJob2);
+    result = parse_mining_notify(notify_with_merkle.c_str(), mJob2);
     TEST_ASSERT_TRUE(result);
     TEST_ASSERT_EQUAL_INT(2, mJob2.merkle_branch_len);
     TEST_ASSERT_FALSE(mJob2.clean_jobs);
@@ -565,7 +574,7 @@ void test_stratum_parse_mining_notify() {
     serializeJson(oversized_doc, oversized_payload);
 
     mining_job oversized_job;
-    result = parse_mining_notify(oversized_payload, oversized_job);
+    result = parse_mining_notify(oversized_payload.c_str(), oversized_job);
     TEST_ASSERT_FALSE(result);
 
     // Test string length validation on job_id
@@ -591,13 +600,13 @@ void test_stratum_parse_mining_notify() {
     serializeJson(long_doc, long_payload);
 
     mining_job long_job;
-    result = parse_mining_notify(long_payload, long_job);
+    result = parse_mining_notify(long_payload.c_str(), long_job);
     TEST_ASSERT_FALSE(result);
 
     // Test malformed JSON
     String malformed = "{\"method\":\"mining.notify\",\"params\":[";
     mining_job mJob3;
-    result = parse_mining_notify(malformed, mJob3);
+    result = parse_mining_notify(malformed.c_str(), mJob3);
     TEST_ASSERT_FALSE(result);
 
     Serial.println("✓ Parse mining notify tests passed");

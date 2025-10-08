@@ -62,7 +62,7 @@ void tDisplay_AlternateRotation(void)
 
 void tDisplay_MinerScreen(unsigned long mElapsed)
 {
-  if (digitalRead(TFT_BL)) return;
+  if (!digitalRead(TFT_BL)) return;
 
   mining_data data = getMiningData(mElapsed);
 

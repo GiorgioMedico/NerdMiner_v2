@@ -48,7 +48,7 @@ std::atomic<uint32_t> templates{0};
 std::atomic<uint32_t> hashes{0};
 std::atomic<uint32_t> Mhashes{0};
 std::atomic<uint32_t> totalKHashes{0};
-std::atomic<uint32_t> elapsedKHs{0};
+std::atomic<float> elapsedKHs{0.0f};
 std::atomic<uint64_t> upTime{0};
 
 std::atomic<uint32_t> shares{0}; // increase if blockhash has 32 bits of zeroes
@@ -64,7 +64,7 @@ std::atomic<uint32_t> sha_timeout_count{0};
 //Track mining stats in non volatile memory
 extern TSettings Settings;
 
-IPAddress serverIP(1, 1, 1, 1); //Temporally save poolIPaddres
+IPAddress serverIP(1, 1, 1, 1); //Temporarily save poolIPaddres
 
 //Global work data 
 static WiFiClient client;
@@ -82,15 +82,10 @@ int currentIntervalIndex = 0;
 
 bool checkPoolConnection(void)
 {
-  // Fast path: WiFi check
-  if (WiFi.status() != WL_CONNECTED) {
-    s_client_connected.store(false, std::memory_order_release);
-    isMinerSuscribed.store(false, std::memory_order_release);
-    return false;
-  }
 
   // Fast path: Already connected
-  if (client.connected()) {
+  if (client.connected()) 
+  {
     s_client_connected.store(true, std::memory_order_release);
     return true;
   }
@@ -99,31 +94,41 @@ bool checkPoolConnection(void)
   s_client_connected.store(false, std::memory_order_release);
   isMinerSuscribed.store(false, std::memory_order_release);
 
-  DEBUG_SERIAL_PRINTLN("Client not connected, trying to connect...");
+  DEBUG_SERIAL_PRINTF("[POOL] Client not connected, attempting to connect to %s:%d\n", Settings.PoolAddress.c_str(), Settings.PoolPort);
 
-  // DNS resolution with caching (1 hour timeout - pools rarely change IPs)
-  static bool dns_resolved = false;
-  static uint32_t last_dns_resolve = 0;
-  uint32_t now = millis();
-
-  if (!dns_resolved || (now - last_dns_resolve > DNS_CACHE_DURATION_MS)) {
-    if (WiFi.hostByName(Settings.PoolAddress.c_str(), serverIP) != 1) {
-      DEBUG_SERIAL_PRINTLN("DNS resolution failed: " + Settings.PoolAddress);
-      dns_resolved = false;
-      return false;
-    }
-    dns_resolved = true;
-    last_dns_resolve = now;
-    DEBUG_SERIAL_PRINTF("Resolved DNS: %s\n", serverIP.toString().c_str());
+  //Resolve first time pool DNS and save IP
+  if(serverIP == IPAddress(1,1,1,1)) 
+  {
+    DEBUG_SERIAL_PRINTF("[POOL] Resolving DNS for %s (first time)\n", Settings.PoolAddress.c_str());
+    int dns_result = WiFi.hostByName(Settings.PoolAddress.c_str(), serverIP);
+    if (dns_result == 1)
+      DEBUG_SERIAL_PRINTF("[POOL] ✓ DNS resolved: %s -> %s\n", Settings.PoolAddress.c_str(), serverIP.toString().c_str());
+    else
+      DEBUG_SERIAL_PRINTF("[POOL] ❌ DNS resolution FAILED for %s (serverIP remains %s)\n", Settings.PoolAddress.c_str(), serverIP.toString().c_str());
   }
 
-  // Connection attempt (ensure clean socket state)
-  client.stop();
-  if (!client.connect(serverIP, Settings.PoolPort)) {
-    DEBUG_SERIAL_PRINTLN("Connection failed: " + Settings.PoolAddress);
+  // Check if we have a valid IP
+  if (serverIP == IPAddress(1,1,1,1)) 
+  {
+    DEBUG_SERIAL_PRINTF("[POOL] No valid serverIP available, cannot connect\n");
     return false;
   }
 
+  //Try connecting pool IP
+  DEBUG_SERIAL_PRINTF("[POOL] Attempting TCP connect to %s:%d (timeout 5s)\n", serverIP.toString().c_str(), Settings.PoolPort);
+  if (!client.connect(serverIP, Settings.PoolPort, 5000)) {
+    DEBUG_SERIAL_PRINTF("[POOL] ❌ TCP connection FAILED to %s:%d\n", serverIP.toString().c_str(), Settings.PoolPort);
+    DEBUG_SERIAL_PRINTF("[POOL] Retrying DNS resolution for %s\n", Settings.PoolAddress.c_str());
+    int dns_retry = WiFi.hostByName(Settings.PoolAddress.c_str(), serverIP);
+    if (dns_retry == 1)
+      DEBUG_SERIAL_PRINTF("[POOL] ✓ DNS retry succeeded: %s -> %s\n", Settings.PoolAddress.c_str(), serverIP.toString().c_str());
+    else
+      DEBUG_SERIAL_PRINTF("[POOL] ❌ DNS retry FAILED for %s\n", Settings.PoolAddress.c_str());
+      
+    return false;
+  }
+
+  DEBUG_SERIAL_PRINTF("[POOL] ✓ TCP connection established to %s:%d\n", Settings.PoolAddress.c_str(), Settings.PoolPort);
   s_client_connected.store(true, std::memory_order_release);
   return true;
 }
@@ -149,25 +154,29 @@ uint32_t mStart0Hashrate = 0;
 bool checkPoolInactivity(uint32_t keepAliveTime, uint32_t inactivityTime)
 {
     // Read hashrate calculated by runMonitor (no race condition, no wraparound issues)
-    unsigned long elapsedKHs_local = elapsedKHs.load(std::memory_order_relaxed);
+    float elapsedKHs_local = elapsedKHs.load(std::memory_order_relaxed);
 
     uint32_t time_now = millis();
 
     // If no shares sent to pool, send something to pool to hold socket open
     adjust_for_wraparound(time_now, mLastTXtoPool);
-    if ( time_now > mLastTXtoPool + keepAliveTime)
+    if (time_now > mLastTXtoPool + keepAliveTime)
     {
       mLastTXtoPool = time_now;
       DEBUG_SERIAL_PRINTLN("  Sending  : KeepAlive suggest_difficulty");
       tx_suggest_difficulty(client, DEFAULT_DIFFICULTY);
-      DEBUG_SERIAL_PRINTLN("  Sending keepAlive to pool -> Detected client disconnected");
     }
 
-    if(elapsedKHs_local == 0)
+    if(elapsedKHs_local <= 0.0f)
     {
       //Check if hashrate is 0 during inactivityTIme
-      if(mStart0Hashrate == 0) mStart0Hashrate  = time_now;
-      if((time_now-mStart0Hashrate) > inactivityTime) { mStart0Hashrate=0; return true;}
+      if(mStart0Hashrate == 0) 
+        mStart0Hashrate  = time_now;
+      if((time_now-mStart0Hashrate) > inactivityTime) 
+      { 
+        mStart0Hashrate=0; 
+        return true;
+      }
       return false;
     }
 
@@ -184,6 +193,9 @@ struct JobRequest
   uint8_t sha_buffer[128];
   uint32_t midstate[8];
   uint32_t bake[16];
+  char job_id[64];       // Pool's job ID
+  char ntime[9];         // Job's ntime (8 hex chars + null)
+  char extranonce2[17];  // Extranonce2 (up to 16 hex chars + null)
 };
 
 struct JobResult
@@ -194,6 +206,9 @@ struct JobResult
   uint32_t nonces_skipped;     // Nonces skipped due to SHA hardware timeout
   double difficulty;
   uint8_t hash[32];
+  char job_id[64];       // Pool's job ID
+  char ntime[9];         // Job's ntime
+  char extranonce2[17];  // Extranonce2
 };
 
 static std::mutex s_job_mutex;
@@ -207,9 +222,11 @@ std::list<std::shared_ptr<JobResult>> s_job_result_list;
 static std::atomic<uint8_t> s_working_current_job_id{0xFF};
 
 static void JobPush(std::list<std::shared_ptr<JobRequest>> &job_list,  uint32_t id, uint32_t nonce_start, uint32_t nonce_count, double difficulty,
-                    const uint8_t* sha_buffer, const uint32_t* midstate, const uint32_t* bake)
+                    const uint8_t* sha_buffer, const uint32_t* midstate, const uint32_t* bake,
+                    const char* job_id, const char* ntime, const char* extranonce2)
 {
   std::shared_ptr<JobRequest> job = std::make_shared<JobRequest>();
+  memset(job.get(), 0, sizeof(JobRequest));
   job->id = id;
   job->nonce_start = nonce_start;
   job->nonce_count = nonce_count;
@@ -217,6 +234,9 @@ static void JobPush(std::list<std::shared_ptr<JobRequest>> &job_list,  uint32_t 
   memcpy(job->sha_buffer, sha_buffer, sizeof(job->sha_buffer));
   memcpy(job->midstate, midstate, sizeof(job->midstate));
   memcpy(job->bake, bake, sizeof(job->bake));
+  strncpy(job->job_id, job_id, sizeof(job->job_id) - 1);
+  strncpy(job->ntime, ntime, sizeof(job->ntime) - 1);
+  strncpy(job->extranonce2, extranonce2, sizeof(job->extranonce2) - 1);
   job_list.push_back(job);
 }
 
@@ -260,12 +280,17 @@ static uint32_t RandomGet()
 
 #endif
 
-void runStratumWorker(void *name) 
+void runStratumWorker(void *name)
 {
 // TEST: https://bitcoin.stackexchange.com/questions/22929/full-example-data-for-scrypt-stratum-client
 
   DEBUG_SERIAL_PRINTLN("");
   DEBUG_SERIAL_PRINTF("\n[WORKER] Started. Running %s on core %d\n", (char *)name, xPortGetCoreID());
+  DEBUG_SERIAL_PRINTLN("========================================");
+  DEBUG_SERIAL_PRINTF("[CONFIG] Pool:   %s:%d\n", Settings.PoolAddress.c_str(), Settings.PoolPort);
+  DEBUG_SERIAL_PRINTF("[CONFIG] Wallet: %s\n", Settings.BtcWallet);
+  DEBUG_SERIAL_PRINTF("[CONFIG] Pass:   %s\n", Settings.PoolPassword);
+  DEBUG_SERIAL_PRINTLN("========================================");
 
   #ifdef DEBUG_MEMORY
   DEBUG_SERIAL_PRINTF("### [Total Heap / Free heap / Min free heap]: %d / %d / %d \n", ESP.getHeapSize(), ESP.getFreeHeap(), ESP.getMinFreeHeap());
@@ -278,11 +303,7 @@ void runStratumWorker(void *name)
   uint32_t nonce_pool = 0;
   uint32_t job_pool = 0xFFFFFFFF;
   uint32_t last_job_time = millis();
-
-  // Static buffer for accumulating partial pool responses (eliminates heap fragmentation)
-  // Size must match MAX_POOL_LINE_SIZE to handle all valid stratum messages
-  static char pending_buffer[MAX_POOL_LINE_SIZE + 1];
-  static uint16_t pending_len = 0;
+  bool first_job_received = false;
 
   while(true) 
   {
@@ -290,92 +311,75 @@ void runStratumWorker(void *name)
     if(WiFi.status() != WL_CONNECTED)
     {
       // WiFi is disconnected, so reconnect now
+      DEBUG_SERIAL_PRINTLN("[WIFI] ❌ WiFi disconnected - attempting reconnection");
       mMonitor.NerdStatus.store(NM_Connecting, std::memory_order_release);
       s_client_connected.store(false, std::memory_order_release);
       MiningJobStop(job_pool, s_submission_map);
-      pending_len = 0; // Drop any partial data from the old socket
       WiFi.reconnect();
       vTaskDelay(5000 / portTICK_PERIOD_MS);
       continue;
     } 
 
-    // Cache connection checks to reduce overhead (only recheck every CONN_CHECK_CACHE_MS)
-    // TELEMETRY: Track cache hit rate by counting else branch vs total checks
-    // Expected: 90%+ cache hits (100ms cache, 20ms loop = ~5 checks per cache refresh)
-    static bool cached_connected = false;
-    static uint32_t last_conn_check = 0;
-    uint32_t now = millis();
-
-    adjust_for_wraparound(now, last_conn_check);
-
-    bool wasDisconnected = false;
-    bool need_reconnect = false;
-
-    // Only perform expensive connection check if cache expired or last check failed
-    if (!cached_connected || (now - last_conn_check) >= CONN_CHECK_CACHE_MS) {
-      wasDisconnected = !client.connected();
-      cached_connected = checkPoolConnection();
-      last_conn_check = now;
-      need_reconnect = !cached_connected;
-      // TELEMETRY: Increment cache_miss counter here
-    } else {
-      // Use cached result
-      need_reconnect = !cached_connected;
-      // TELEMETRY: Increment cache_hit counter here
-    }
-
-    if(need_reconnect)
+    if(!checkPoolConnection())
     {
       //If server is not reachable add random delay for connection retries
       //Generate value between 1 and 60 secs
+      int retry_delay_sec = 1 + esp_random() % 60;
+      DEBUG_SERIAL_PRINTF("[POOL] Connection failed - retrying in %d seconds (esp_random check)\n", retry_delay_sec);
       MiningJobStop(job_pool, s_submission_map);
-      vTaskDelay(((1 + rand() % 60) * 1000) / portTICK_PERIOD_MS);
+      vTaskDelay((retry_delay_sec * 1000) / portTICK_PERIOD_MS);
       continue;
-    }
-
-    if (wasDisconnected) 
-    {
-      pending_len = 0; // Clear stale partial response after reconnecting
     }
 
     if(!isMinerSuscribed.load(std::memory_order_acquire))
     {
       //Stop miner current jobs
+      DEBUG_SERIAL_PRINTLN("[STRATUM] Starting subscription handshake...");
       mWorker = init_mining_subscribe();
 
       // STEP 1: Pool server connection (SUBSCRIBE)
+      DEBUG_SERIAL_PRINTLN("[STRATUM] STEP 1/3: Subscribing to pool...");
       if(!tx_mining_subscribe(client, mWorker))
       {
+        DEBUG_SERIAL_PRINTLN("[STRATUM] ❌ Subscribe FAILED - closing connection");
         client.stop();
-        cached_connected = false;  // Invalidate connection cache
-        pending_len = 0;
         MiningJobStop(job_pool, s_submission_map);
         continue;
       }
-      
+      DEBUG_SERIAL_PRINTLN("[STRATUM] ✓ Subscribe successful");
+
       strcpy(mWorker.wName, Settings.BtcWallet);
       strcpy(mWorker.wPass, Settings.PoolPassword);
+
       // STEP 2: Pool authorize work (Block Info)
-      tx_mining_auth(client, mWorker.wName, mWorker.wPass); //Don't verifies authoritzation, TODO
-      //tx_mining_auth2(client, mWorker.wName, mWorker.wPass); //Don't verifies authoritzation, TODO
+      DEBUG_SERIAL_PRINTLN("[STRATUM] STEP 2/3: Authorizing worker...");
+      if (!tx_mining_auth(client, mWorker.wName, mWorker.wPass)) 
+      {
+        DEBUG_SERIAL_PRINTLN("[ERROR][STRATUM] ❌ Authorization FAILED - closing connection");
+        client.stop();
+        MiningJobStop(job_pool, s_submission_map);
+        continue;
+      }
+      DEBUG_SERIAL_PRINTLN("[STRATUM] ✓ Authorization successful");
 
       // STEP 3: Suggest pool difficulty
+      DEBUG_SERIAL_PRINTLN("[STRATUM] STEP 3/3: Suggesting difficulty...");
       tx_suggest_difficulty(client, currentPoolDifficulty);
+      DEBUG_SERIAL_PRINTF("[STRATUM] ✓ Difficulty suggestion sent: %.2f\n", currentPoolDifficulty);
 
       isMinerSuscribed.store(true, std::memory_order_release);
       uint32_t time_now = millis();
       mLastTXtoPool = time_now;
       last_job_time = time_now;
+      DEBUG_SERIAL_PRINTLN("[STRATUM] ✓✓✓ Handshake complete - waiting for jobs...");
     }
 
     //Check if pool is down for almost 5minutes and then restart connection with pool (1min=600000ms)
     if(checkPoolInactivity(KEEPALIVE_TIME_ms, POOLINACTIVITY_TIME_ms))
     {
       //Restart connection
-      DEBUG_SERIAL_PRINTLN("  Detected more than 2 min without data form stratum server. Closing socket and reopening...");
+      DEBUG_SERIAL_PRINTLN("[POOL] ⏱️ TIMEOUT: No data received for >60s - reconnecting...");
       client.stop();
-      cached_connected = false;  // Invalidate connection cache
-      pending_len = 0;
       isMinerSuscribed.store(false, std::memory_order_release);
       MiningJobStop(job_pool, s_submission_map);
       continue;
@@ -388,9 +392,9 @@ void runStratumWorker(void *name)
       // Reconnect if no job received for 10 minutes
       if (time_now >= last_job_time + JOB_TIMEOUT_MS)
       {
+        uint32_t elapsed_sec = (time_now - last_job_time) / 1000;
+        DEBUG_SERIAL_PRINTF("[POOL] ⏱️ JOB TIMEOUT: No job for %lu seconds (>600s) - reconnecting...\n", elapsed_sec);
         client.stop();
-        cached_connected = false;  // Invalidate connection cache
-        pending_len = 0;
         isMinerSuscribed.store(false, std::memory_order_release);
         MiningJobStop(job_pool, s_submission_map);
         continue;
@@ -405,120 +409,26 @@ void runStratumWorker(void *name)
     #endif
 
     //Read pending messages from pool
-    int available = client.available();
-    while(client.connected() && available > 0)
+    while(client.connected() && client.available())
     {
-      // Accumulate data until we get a full line (preserve partial reads across socket timeouts)
-      bool foundNewline = false;
-
-      // Optimized bulk read: read chunks instead of byte-by-byte to reduce syscalls
-      // Chunks align with typical stratum message sizes (200-800 bytes)
-      while (available > 0 && pending_len < sizeof(pending_buffer) - 1)
-      {
-        size_t space_available = sizeof(pending_buffer) - pending_len - 1;
-        size_t chunk_size = min((size_t)available, min(space_available, (size_t)CHUNK_READ_SIZE));
-
-        uint8_t chunk[CHUNK_READ_SIZE];
-        int bytes_read = client.readBytes(chunk, chunk_size);
-        available = client.available();  // Refresh after reading
-
-        for (int i = 0; i < bytes_read; i++)
-        {
-          char c = chunk[i];
-          if (c == '\n')
-          {
-            foundNewline = true;
-            break;
-          }
-          if (c != '\r')
-          { // Skip carriage return
-            // Defensive bounds check (should never overflow with correct chunk_size calculation)
-            if (pending_len >= sizeof(pending_buffer) - 1) break;
-            pending_buffer[pending_len++] = c;
-          }
-        }
-
-        if (foundNewline) break;
-      }
-
-      // If we hit the size limit without finding newline, discard rest of line and disconnect
-      if (!foundNewline && pending_len >= sizeof(pending_buffer) - 1)
-      {
-        DEBUG_SERIAL_PRINTF("Pool response too large (%u bytes), disconnecting\n", pending_len);
-        // Consume remaining data on this line
-        available = client.available();
-        while (available > 0)
-        {
-          if (client.read() == '\n') break;
-          available = client.available();
-        }
-        pending_len = 0;
-        client.stop();
-        cached_connected = false;  // Invalidate connection cache
-        isMinerSuscribed.store(false, std::memory_order_release);
-        MiningJobStop(job_pool, s_submission_map);
-        vTaskDelay(5000 / portTICK_PERIOD_MS); // Wait 5s before reconnecting
-        break;
-      }
-
-      // Wait for more data if newline not found yet
-      if (!foundNewline) 
-      {
-        continue;
-      }
-
-      // Null-terminate buffer (no String allocation needed)
-      pending_buffer[pending_len] = '\0';
-      pending_len = 0;
-
-      // Ignore empty keepalive lines
-      if (pending_buffer[0] == '\0')
-      {
-        continue;
-      }
-      //DEBUG_SERIAL_PRINTLN("  Received message from pool");
-
-      // Fast-path message parsing: check for common patterns before full JSON parse
-      // This reduces CPU overhead by avoiding unnecessary JSON deserialization
-      // TELEMETRY: Track fast-path hit rate vs parse_mining_method() fallback calls
-      // Expected: 90%+ fast-path (mining.notify + set_difficulty dominate traffic)
-      // Alert if: fallback rate >10% (unexpected pool messages or protocol changes)
-      stratum_method result;
-      const char* msg = pending_buffer;
-
-      // Quick check for method messages (most common during mining)
-      if (msg[0] == '{' && strstr(msg, "\"method\"") != nullptr) {
-        // Check for mining.notify (most frequent message type)
-        if (strstr(msg, "mining.notify") != nullptr) {
-          result = MINING_NOTIFY;
-          // TELEMETRY: Increment fast_path_notify counter
-        } else if (strstr(msg, "mining.set_difficulty") != nullptr) {
-          result = MINING_SET_DIFFICULTY;
-          // TELEMETRY: Increment fast_path_difficulty counter
-        } else {
-          // Uncommon method, use full parser
-          result = parse_mining_method(msg);
-          // TELEMETRY: Increment fast_path_fallback counter
-        }
-      } else if (msg[0] == '{' && strstr(msg, "\"result\"") != nullptr) {
-        // Result message - check for success/error
-        if (strstr(msg, "\"error\":null") != nullptr || strstr(msg, "\"result\":true") != nullptr) {
-          result = STRATUM_SUCCESS;
-        } else if (strstr(msg, "\"error\":[") != nullptr || strstr(msg, "\"error\": [") != nullptr) {
-          result = STRATUM_PARSE_ERROR;
-        } else {
-          // Ambiguous, use full parser
-          result = parse_mining_method(msg);
-        }
-      } else {
-        // Unknown format, use full parser
-        result = parse_mining_method(msg);
-      }
+      String line = client.readStringUntil('\n');
+      DEBUG_SERIAL_PRINTLN("  Received message from pool");      
+      stratum_method result = parse_mining_method(line.c_str());
 
       switch (result)
       {
-          case MINING_NOTIFY:         if(parse_mining_notify(pending_buffer, mJob))
+          case MINING_NOTIFY:         if(parse_mining_notify(line.c_str(), mJob))
                                       {
+                                          if (!first_job_received) 
+                                          {
+                                            DEBUG_SERIAL_PRINTLN("[JOB] ✓✓✓ First mining job received - starting mining!");
+                                            DEBUG_SERIAL_PRINTF("[JOB] Job ID: %s\n", mJob.job_id.c_str());
+                                            first_job_received = true;
+                                          } 
+                                          else
+                                            DEBUG_SERIAL_PRINTF("[JOB] New job received (ID: %s)\n", mJob.job_id.c_str());
+                                          
+
                                           // Clear job lists to prevent stale work
                                           {
                                             std::lock_guard<std::mutex> lock(s_job_mutex);
@@ -581,14 +491,17 @@ void runStratumWorker(void *name)
                                           for (int i = 0; i < 4; ++ i)
                                           {
                                             #if 1
-                                            JobPush(new_sw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_SW, currentPoolDifficulty, mMiner.bytearray_blockheader, diget_mid, bake);
+                                            JobPush(new_sw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_SW, currentPoolDifficulty, mMiner.bytearray_blockheader, diget_mid, bake,
+                                                    mJob.job_id.c_str(), mJob.ntime.c_str(), mWorker.extranonce2.c_str());
                                             nonce_pool += NONCE_PER_JOB_SW;  // Sequential increment (wraparound automatic)
                                             #endif
                                             #ifdef HARDWARE_SHA256
                                               #if defined(CONFIG_IDF_TARGET_ESP32)
-                                                JobPush(new_hw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, sha_buffer_swap, hw_midstate, bake);
+                                                JobPush(new_hw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, sha_buffer_swap, hw_midstate, bake,
+                                                        mJob.job_id.c_str(), mJob.ntime.c_str(), mWorker.extranonce2.c_str());
                                               #else
-                                                JobPush(new_hw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, mMiner.bytearray_blockheader, hw_midstate, bake);
+                                                JobPush(new_hw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, mMiner.bytearray_blockheader, hw_midstate, bake,
+                                                        mJob.job_id.c_str(), mJob.ntime.c_str(), mWorker.extranonce2.c_str());
                                               #endif
                                             nonce_pool += NONCE_PER_JOB_HW;  // Sequential increment (wraparound automatic)
                                             #endif
@@ -602,95 +515,69 @@ void runStratumWorker(void *name)
                                             s_job_request_list_hw.splice(s_job_request_list_hw.end(), new_hw_jobs);
                                             #endif
                                           }
-                                      } else
+                                      } 
+                                      else
                                       {
-                                        DEBUG_SERIAL_PRINTF("Mining notify parse error (line: %.100s), restarting\n", pending_buffer);
+                                        DEBUG_SERIAL_PRINTF("[ERROR][JOB] ❌ Mining notify parse FAILED (line: %.100s) - reconnecting\n", line.c_str());
                                         client.stop();
-                                        cached_connected = false;  // Invalidate connection cache
-                                        pending_len = 0;
                                         isMinerSuscribed.store(false, std::memory_order_release);
                                         MiningJobStop(job_pool, s_submission_map);
+                                        first_job_received = false;
                                       }
                                       break;
           case MINING_SET_DIFFICULTY:{
-                                      // Useless because i am working in a solo pool, i use this method only for keep alive the connection
-                                      double set_difficulty = 0.0;
-                                      parse_mining_set_difficulty(pending_buffer, set_difficulty);
-                                      DEBUG_SERIAL_PRINTF("Mining set difficulty %f \n", set_difficulty);
+                                      parse_mining_set_difficulty(line.c_str(), currentPoolDifficulty);
+                                      DEBUG_SERIAL_PRINTF("[DIFFICULTY] Pool set difficulty: %.2f\n", currentPoolDifficulty);
+
                                       break;
                                       }
           case STRATUM_SUCCESS:       {
-                                        unsigned long id = parse_extract_id(pending_buffer);
+                                        unsigned long id = parse_extract_id(line.c_str());
                                         auto itt = s_submission_map.find(id);
                                         if (itt != s_submission_map.end())
                                         {
+                                          DEBUG_SERIAL_PRINTF("[SHARE] ✓ Share accepted (diff: %f)\n", itt->second->diff);
                                           // Update best_diff if new difficulty is higher (single writer, safe without CAS)
                                           float current = best_diff.load(std::memory_order_relaxed);
-                                          if (itt->second->diff > current) 
+                                          if (itt->second->diff > current)
                                           {
                                             best_diff.store(itt->second->diff, std::memory_order_relaxed);
-                                          }
-                                          // Also update pool difficulty - pool accepting this share means it met the current target
-                                          if (itt->second->diff > currentPoolDifficulty) 
-                                          {
-                                            currentPoolDifficulty = itt->second->diff;
                                           }
                                           if (itt->second->is32bit)
                                             shares.fetch_add(1, std::memory_order_relaxed);
                                           if (itt->second->isValid)
                                           {
-                                            DEBUG_SERIAL_PRINTLN("CONGRATULATIONS! Valid block found");
+                                            DEBUG_SERIAL_PRINTLN("🎉 CONGRATULATIONS! Valid block found! 🎉");
                                             valids.fetch_add(1, std::memory_order_relaxed);
                                           }
                                           s_submission_map.erase(itt);
-                                        }
+                                        } 
+                                        else 
+                                          DEBUG_SERIAL_PRINTF("[SHARE] ✓ Success response (ID: %lu, not tracked)\n", id);
                                       }
                                       break;
           case STRATUM_PARSE_ERROR:   {
-                                        unsigned long id = parse_extract_id(pending_buffer);
+                                        unsigned long id = parse_extract_id(line.c_str());
                                         auto itt = s_submission_map.find(id);
                                         if (itt != s_submission_map.end())
                                         {
-                                          DEBUG_SERIAL_PRINTF("[ERROR] Pool refused submission %d (line: %.100s)\n", id, pending_buffer);
+                                          DEBUG_SERIAL_PRINTF("[ERROR] ❌ Pool rejected submission %lu (msg: %.150s)\n", id, line.c_str());
                                           s_submission_map.erase(itt);
-                                        }
+                                        } 
+                                        else
+                                          DEBUG_SERIAL_PRINTF("[ERROR] ❌ Parse error (msg: %.150s)\n", line.c_str());
                                       }
                                       break;
-          default:                    DEBUG_SERIAL_PRINTLN("Parsed JSON: unknown\n"); break;
+
+          default:                    DEBUG_SERIAL_PRINTF("[MSG] Unhandled result type: %d\n", result); break;
 
       }
 
-      // Refresh available bytes for next iteration
-      available = client.available();
     }
 
     std::list<std::shared_ptr<JobResult>> job_result_list;
 
-    // Adaptive delay: use shorter delays when work is available for better responsiveness
-    // TELEMETRY: Monitor delay_ms distribution to tune responsiveness vs CPU usage
-    // Expected: ACTIVE_MS when queue < 50%, NORMAL_MS when queue 75%+, IDLE_MS otherwise
-    uint32_t delay_ms;
-    {
-      std::lock_guard<std::mutex> lock(s_job_mutex);
-      bool has_pending_results = !s_job_result_list.empty();
-      bool sw_queue_low = s_job_request_list_sw.size() < JOB_QUEUE_SIZE / 2;
-      #ifdef HARDWARE_SHA256
-      bool hw_queue_low = s_job_request_list_hw.size() < JOB_QUEUE_SIZE / 2;
-      #else
-      bool hw_queue_low = false;
-      #endif
-
-      // TELEMETRY: Track queue depths: s_job_request_list_sw.size(), s_job_request_list_hw.size()
-      // Healthy range: 4-8 jobs queued (50-100% of JOB_QUEUE_SIZE)
-      if (has_pending_results || sw_queue_low || hw_queue_low) {
-        delay_ms = STRATUM_DELAY_ACTIVE_MS;  // Work available - high priority
-      } else if (s_job_request_list_sw.size() >= JOB_QUEUE_SIZE * 3 / 4) {
-        delay_ms = STRATUM_DELAY_NORMAL_MS;  // Queues healthy - normal operation
-      } else {
-        delay_ms = STRATUM_DELAY_IDLE_MS;    // Idle - conserve CPU
-      }
-    }
-    vTaskDelay(delay_ms / portTICK_PERIOD_MS);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
 
 
     if (job_pool != 0xFFFFFFFF)
@@ -719,7 +606,8 @@ void runStratumWorker(void *name)
         size_t jobs_to_create = (space_available < JOB_REFILL_BATCH) ? space_available : JOB_REFILL_BATCH;
         for (size_t i = 0; i < jobs_to_create; ++i)
         {
-          JobPush(new_jobs_sw, job_pool, nonce_pool, NONCE_PER_JOB_SW, currentPoolDifficulty, mMiner.bytearray_blockheader, diget_mid, bake);
+          JobPush(new_jobs_sw, job_pool, nonce_pool, NONCE_PER_JOB_SW, currentPoolDifficulty, mMiner.bytearray_blockheader, diget_mid, bake,
+                  mJob.job_id.c_str(), mJob.ntime.c_str(), mWorker.extranonce2.c_str());
           nonce_pool += NONCE_PER_JOB_SW;  // Sequential increment (wraparound automatic)
         }
       }
@@ -734,9 +622,11 @@ void runStratumWorker(void *name)
         for (size_t i = 0; i < jobs_to_create; ++i)
         {
           #if defined(CONFIG_IDF_TARGET_ESP32)
-            JobPush(new_jobs_hw, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, sha_buffer_swap, hw_midstate, bake);
+            JobPush(new_jobs_hw, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, sha_buffer_swap, hw_midstate, bake,
+                    mJob.job_id.c_str(), mJob.ntime.c_str(), mWorker.extranonce2.c_str());
           #else
-            JobPush(new_jobs_hw, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, mMiner.bytearray_blockheader, hw_midstate, bake);
+            JobPush(new_jobs_hw, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, mMiner.bytearray_blockheader, hw_midstate, bake,
+                    mJob.job_id.c_str(), mJob.ntime.c_str(), mWorker.extranonce2.c_str());
           #endif
           nonce_pool += NONCE_PER_JOB_HW;  // Sequential increment (wraparound automatic)
         }
@@ -773,12 +663,12 @@ void runStratumWorker(void *name)
       {
         total_hashes_processed += (res->nonce_count - res->nonces_skipped);
       }
-      if (res->difficulty > currentPoolDifficulty && job_pool == res->id && res->nonce != 0xFFFFFFFF)
+      if (res->difficulty > DEFAULT_DIFFICULTY && job_pool == res->id && res->nonce != 0xFFFFFFFF)
       {
         if (!client.connected())
           break;
         unsigned long sumbit_id = 0;
-        tx_mining_submit(client, mWorker, mJob, res->nonce, sumbit_id);
+        tx_mining_submit(client, mWorker.wName, res->job_id, res->extranonce2, res->ntime, res->nonce, sumbit_id);
         DEBUG_SERIAL_PRINT("   - Current diff share: "); DEBUG_SERIAL_PRINTLN(res->difficulty,12);
         DEBUG_SERIAL_PRINT("   - Current pool diff : "); DEBUG_SERIAL_PRINTLN(currentPoolDifficulty,12);
         DEBUG_SERIAL_PRINT("   - TX SHARE: ");
@@ -794,74 +684,24 @@ void runStratumWorker(void *name)
         if (submission->is32bit)
         {
           submission->isValid = checkValid(res->hash, mMiner.bytearray_target);
-        } else
+        } 
+        else
           submission->isValid = false;
-
-        {
-
-          // Check for ID collision (rare but possible after wraparound)
-          auto existing = s_submission_map.find(sumbit_id);
-          if (existing != s_submission_map.end()) {
-            DEBUG_SERIAL_PRINTF("[WARN] Submission ID collision: %lu already pending\n", sumbit_id);
-            DEBUG_SERIAL_PRINTF("[WARN] Overwriting old submission (ID wraparound detected)\n");
-            s_submission_map.erase(existing);
-          }
 
           s_submission_map.insert(std::make_pair(sumbit_id, submission));
 
-          // Cleanup strategy: First evict old entries (60s timeout), then FIFO if still oversized
-          // Only scan for timeouts if map is getting full (avoid hot path overhead)
-          // Use 1/3 threshold instead of 1/2 to trigger cleanup earlier and prevent OOM
-          // Use lazy evaluation: only run cleanup every Nth insertion to reduce overhead
-          // TELEMETRY: Monitor cleanup frequency and removed_count
-          // Expected: Cleanup runs rarely (<1% of submissions), removes 0-2 entries typically
-          // Alert if: cleanup_counter hits CLEANUP_BATCH_INTERVAL frequently (map pressure)
-          static uint32_t cleanup_counter = 0;
-          constexpr size_t CLEANUP_THRESHOLD = SUBMISSION_MAP_MAX / 3;
-          constexpr size_t TARGET_SIZE = CLEANUP_THRESHOLD / 2;  // Clean down to this size
-
-          if (s_submission_map.size() >= CLEANUP_THRESHOLD &&
-              ++cleanup_counter >= CLEANUP_BATCH_INTERVAL) {
-            cleanup_counter = 0;  // Reset counter
-            uint32_t now = millis();
-            size_t removed_count = 0;
-
-            // First pass: Remove timed-out submissions
-            // Early exit once we've cleaned enough to get back below target
-            for (auto it = s_submission_map.begin();
-                 it != s_submission_map.end() && s_submission_map.size() > TARGET_SIZE; ) {
-              uint32_t age = time_elapsed(now, it->second->timestamp_ms);
-
-              if (age > SUBMISSION_TIMEOUT_MS) {
-                DEBUG_SERIAL_PRINTF("[WARN] Evicting timed-out submission ID=%lu (age=%lums)\n",
-                                    it->first, age);
-                it = s_submission_map.erase(it);
-                removed_count++;
-              } else {
-                ++it;
-              }
-            }
-
-            if (removed_count > 0) {
-              DEBUG_SERIAL_PRINTF("[INFO] Cleaned %zu timed-out submissions, size now %zu\n",
-                                  removed_count, s_submission_map.size());
-            }
-          }
-
           // Second pass: If still oversized, evict oldest entries (shouldn't happen often)
-          while (s_submission_map.size() > SUBMISSION_MAP_MAX) {
-            DEBUG_SERIAL_PRINTF("[WARN] Evicting oldest submission ID=%lu (map full)\n",
-                                s_submission_map.begin()->first);
+          while (s_submission_map.size() > SUBMISSION_MAP_MAX) 
+          {
+            DEBUG_SERIAL_PRINTF("[WARN] Evicting oldest submission ID=%lu (map full)\n", s_submission_map.begin()->first);
             s_submission_map.erase(s_submission_map.begin());
           }
-        }
       }
     }
 
     // Apply batched hash update (single atomic operation instead of per-result)
-    if (total_hashes_processed > 0) {
+    if (total_hashes_processed > 0)
       hashes.fetch_add(total_hashes_processed, std::memory_order_relaxed);
-    }
   }
 }
 
@@ -900,11 +740,15 @@ void minerWorkerSw(void * task_id)
     if (job)
     {
       result = std::make_shared<JobResult>();
+      memset(result.get(), 0, sizeof(JobResult));
       result->difficulty = job->difficulty;
       result->nonce = 0xFFFFFFFF;
       result->id = job->id;
       result->nonce_count = job->nonce_count;
       result->nonces_skipped = 0;  // SW workers don't skip nonces (no SHA hardware)
+      strncpy(result->job_id, job->job_id, sizeof(result->job_id) - 1);
+      strncpy(result->ntime, job->ntime, sizeof(result->ntime) - 1);
+      strncpy(result->extranonce2, job->extranonce2, sizeof(result->extranonce2) - 1);
       uint8_t job_in_work = job->id & 0xFF;
       for (uint32_t n = 0; n < job->nonce_count; ++n)
       {
@@ -927,11 +771,12 @@ void minerWorkerSw(void * task_id)
           break;
         }
       }
-    } else
-      vTaskDelay(10 / portTICK_PERIOD_MS);
+    } 
+    else
+      vTaskDelay(2 / portTICK_PERIOD_MS);
 
     wdt_counter++;
-    if (wdt_counter >= 8)
+    if (wdt_counter >= WDT_COUNTER)
     {
       wdt_counter = 0;
       esp_task_wdt_reset();
@@ -1114,11 +959,15 @@ void minerWorkerHw(void * task_id)
     if (job)
     {
       result = std::make_shared<JobResult>();
+      memset(result.get(), 0, sizeof(JobResult));
       result->id = job->id;
       result->nonce = 0xFFFFFFFF;
       result->nonce_count = job->nonce_count;
       result->nonces_skipped = 0;  // Track SHA hardware timeouts
       result->difficulty = job->difficulty;
+      strncpy(result->job_id, job->job_id, sizeof(result->job_id) - 1);
+      strncpy(result->ntime, job->ntime, sizeof(result->ntime) - 1);
+      strncpy(result->extranonce2, job->extranonce2, sizeof(result->extranonce2) - 1);
       uint8_t job_in_work = job->id & 0xFF;
       memcpy(digest_mid, job->midstate, sizeof(digest_mid));
       memcpy(sha_buffer, job->sha_buffer+64, sizeof(sha_buffer));
@@ -1196,11 +1045,12 @@ void minerWorkerHw(void * task_id)
         }
       }
       esp_sha_release_hardware();
-    } else
-      vTaskDelay(10 / portTICK_PERIOD_MS);
+    } 
+    else
+      vTaskDelay(2 / portTICK_PERIOD_MS);
 
     wdt_counter++;
-    if (wdt_counter >= 8)
+    if (wdt_counter >= WDT_COUNTER)
     {
       wdt_counter = 0;
       esp_task_wdt_reset();
@@ -1368,11 +1218,15 @@ void minerWorkerHw(void * task_id)
     if (job)
     {
       result = std::make_shared<JobResult>();
+      memset(result.get(), 0, sizeof(JobResult));
       result->id = job->id;
       result->nonce = 0xFFFFFFFF;
       result->nonce_count = job->nonce_count;
       result->nonces_skipped = 0;  // Track SHA hardware timeouts
       result->difficulty = job->difficulty;
+      strncpy(result->job_id, job->job_id, sizeof(result->job_id) - 1);
+      strncpy(result->ntime, job->ntime, sizeof(result->ntime) - 1);
+      strncpy(result->extranonce2, job->extranonce2, sizeof(result->extranonce2) - 1);
       uint8_t job_in_work = job->id & 0xFF;
       memcpy(sha_buffer, job->sha_buffer, 80);
 
@@ -1452,8 +1306,9 @@ void minerWorkerHw(void * task_id)
         }
       }
       esp_sha_unlock_engine(SHA2_256);
-    } else
-      vTaskDelay(10 / portTICK_PERIOD_MS);
+    } 
+    else
+      vTaskDelay(2 / portTICK_PERIOD_MS);
 
     esp_task_wdt_reset();
   }
@@ -1597,7 +1452,7 @@ void resetStat()
     hashes.store(0, std::memory_order_relaxed);
     Mhashes.store(0, std::memory_order_relaxed);
     totalKHashes.store(0, std::memory_order_relaxed);
-    elapsedKHs.store(0, std::memory_order_relaxed);
+    elapsedKHs.store(0.0f, std::memory_order_relaxed);
     upTime.store(0, std::memory_order_relaxed);
     shares.store(0, std::memory_order_relaxed);
     valids.store(0, std::memory_order_relaxed);
@@ -1618,8 +1473,11 @@ void runMonitor(void *name)
   unsigned long frame = 0;
 
   uint32_t seconds_elapsed = 0;
-
-  totalKHashes.store((Mhashes.load(std::memory_order_relaxed) * 1000) + hashes.load(std::memory_order_relaxed) / 1000, std::memory_order_relaxed);
+  uint64_t lastTotalHashes =
+      (static_cast<uint64_t>(Mhashes.load(std::memory_order_relaxed)) * 1000000ULL) +
+      static_cast<uint64_t>(hashes.load(std::memory_order_relaxed));
+  totalKHashes.store(static_cast<uint32_t>(lastTotalHashes / 1000ULL), std::memory_order_relaxed);
+  elapsedKHs.store(0.0f, std::memory_order_relaxed);
   uint32_t last_update_millis = millis();
   uint32_t uptime_frac = 0;
 
@@ -1634,10 +1492,18 @@ void runMonitor(void *name)
     { 
       mLastCheck = now_millis;
       last_update_millis = now_millis;
-      unsigned long currentKHashes = (Mhashes.load(std::memory_order_relaxed) * 1000) + hashes.load(std::memory_order_relaxed) / 1000;
-      uint32_t totalKH = totalKHashes.load(std::memory_order_relaxed);
-      elapsedKHs.store(currentKHashes - totalKH, std::memory_order_relaxed);
-      totalKHashes.store(currentKHashes, std::memory_order_relaxed);
+      const uint64_t currentTotalHashes =
+          (static_cast<uint64_t>(Mhashes.load(std::memory_order_relaxed)) * 1000000ULL) +
+          static_cast<uint64_t>(hashes.load(std::memory_order_relaxed));
+      uint64_t deltaHashes;
+      if (currentTotalHashes >= lastTotalHashes)
+        deltaHashes = currentTotalHashes - lastTotalHashes;
+      else
+        deltaHashes = currentTotalHashes;
+      const float deltaKH = static_cast<float>(static_cast<double>(deltaHashes) / 1000.0);
+      elapsedKHs.store(deltaKH, std::memory_order_relaxed);
+      totalKHashes.store(static_cast<uint32_t>(currentTotalHashes / 1000ULL), std::memory_order_relaxed);
+      lastTotalHashes = currentTotalHashes;
 
       uptime_frac += mElapsed;
       while (uptime_frac >= 1000)
@@ -1651,7 +1517,7 @@ void runMonitor(void *name)
       drawCurrentScreen(mElapsed);
 
       // Monitor state when hashrate is 0.0
-      if (elapsedKHs.load(std::memory_order_relaxed) == 0)
+      if (elapsedKHs.load(std::memory_order_relaxed) <= 0.0f)
       {
         bool subscribed = isMinerSuscribed.load(std::memory_order_acquire);
         bool connected = s_client_connected.load(std::memory_order_acquire);

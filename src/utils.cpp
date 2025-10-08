@@ -54,7 +54,8 @@ uint8_t hex(char ch) {
     return 0;
 }
 
-int to_byte_array(const char *in, size_t out_size, uint8_t *out) {
+int to_byte_array(const char *in, size_t out_size, uint8_t *out) 
+{
     if (!in || !out || !out_size)
         return 0;
 
@@ -62,7 +63,8 @@ int to_byte_array(const char *in, size_t out_size, uint8_t *out) {
     size_t count = 0;
     size_t idx = 0;
 
-    if (len % 2 != 0) {
+    if (len % 2 != 0) 
+    {
         if (count >= out_size)
             return static_cast<int>(count);
         out[count++] = hex(in[idx++]);
@@ -70,14 +72,16 @@ int to_byte_array(const char *in, size_t out_size, uint8_t *out) {
             return static_cast<int>(count);
     }
 
-    for (; idx + 1 < len && count < out_size; idx += 2) {
+    for (; idx + 1 < len && count < out_size; idx += 2) 
+    {
         out[count++] = (hex(in[idx]) << 4) | hex(in[idx + 1]);
     }
 
     return static_cast<int>(count);
 }
 
-void swap_endian_words(const char * hex_words, uint8_t * output) {
+void swap_endian_words(const char * hex_words, uint8_t * output) 
+{
     if (!hex_words || !output)
         return;
 
@@ -89,14 +93,17 @@ void swap_endian_words(const char * hex_words, uint8_t * output) {
     if (to_byte_array(hex_words, binary_length, output) != (int)binary_length)
         return;
     // Swap each 4-byte word in place
-    for (size_t i = 0; i < binary_length; i += 4) {
+    for (size_t i = 0; i < binary_length; i += 4) 
+    {
         uint8_t a = output[i], b = output[i+1], c = output[i+2], d = output[i+3];
         output[i] = d; output[i+1] = c; output[i+2] = b; output[i+3] = a;
     }
 }
 
-void reverse_bytes(uint8_t * data, size_t len) {
-    for (size_t i = 0, j = (len ? len - 1 : 0); i < j; ++i, --j) {
+void reverse_bytes(uint8_t * data, size_t len) 
+{
+    for (size_t i = 0, j = (len ? len - 1 : 0); i < j; ++i, --j) 
+    {
         uint8_t temp = data[i];
         data[i] = data[j];
         data[j] = temp;
@@ -161,7 +168,8 @@ bool isSha256Valid(const void* sha256)
  * @param target 32-byte difficulty target (big-endian, will be reversed for comparison)
  * @return true if hash meets difficulty target, false otherwise
  */
-bool checkValid(const uint8_t* hash, const uint8_t* target) {
+bool checkValid(const uint8_t* hash, const uint8_t* target) 
+{
   if (!hash || !target)
     return false;
 
@@ -170,11 +178,14 @@ bool checkValid(const uint8_t* hash, const uint8_t* target) {
   //convert target to little endian for comparison
   reverse_bytes(diff_target, 32);
 
-  for (int i = 31; i >= 0; i--) {
-    if (hash[i] > diff_target[i]) {
+  for (int i = 31; i >= 0; i--) 
+  {
+    if (hash[i] > diff_target[i]) 
+    {
       return false;
     }
-    if (hash[i] < diff_target[i]) {
+    if (hash[i] < diff_target[i]) 
+    {
       break;
     }
   }
@@ -197,24 +208,28 @@ bool checkValid(const uint8_t* hash, const uint8_t* target) {
  * @param extranonce2_size Size in bytes (1-8 supported)
  * @param extranonce2 Output buffer (must be at least extranonce2_size*2+1 bytes)
 */
-void getRandomExtranonce2(int extranonce2_size, char *extranonce2) {
+void getRandomExtranonce2(int extranonce2_size, char *extranonce2) 
+{
   if (!extranonce2)
     return;
 
   // Validate input size
-  if (extranonce2_size <= 0 || extranonce2_size > 8) {
+  if (extranonce2_size <= 0 || extranonce2_size > 8) 
+  {
     extranonce2[0] = '\0';
     return;
   }
 
   // Use ESP32 hardware RNG to fill the bytes
   uint8_t random_bytes[8];
-  for (int i = 0; i < extranonce2_size && i < 8; i++) {
+  for (int i = 0; i < extranonce2_size && i < 8; i++) 
+  {
     random_bytes[i] = (uint8_t)(esp_random() & 0xFF);
   }
 
   // Convert bytes to hex string with leading zeros
-  for (int i = 0; i < extranonce2_size; i++) {
+  for (int i = 0; i < extranonce2_size; i++) 
+  {
     sprintf(extranonce2 + (i * 2), "%02x", random_bytes[i]);
   }
 
@@ -225,7 +240,8 @@ void getRandomExtranonce2(int extranonce2_size, char *extranonce2) {
 /**
  * get linear extranonce2
 */
-void getNextExtranonce2(int extranonce2_size, char *extranonce2) {
+void getNextExtranonce2(int extranonce2_size, char *extranonce2) 
+{
   if (!extranonce2 || extranonce2_size <= 0 || extranonce2_size > 8)
     return;
 
@@ -241,7 +257,8 @@ void getNextExtranonce2(int extranonce2_size, char *extranonce2) {
            static_cast<unsigned long long>(extranonce2_number));
 }
 
-miner_data init_miner_data(void){
+miner_data init_miner_data(void)
+{
 
   miner_data newMinerData{};
   return newMinerData;
@@ -314,11 +331,13 @@ miner_data calculateMiningData(mining_subscribe& mWorker, mining_job mJob){
         DEBUG_SERIAL_PRINTLN("Failed to expand nbits target");
         return mMiner;
     }
-
+    
+    #ifdef DEBUG_MINING_ALL
     DEBUG_SERIAL_PRINT("    target: ");
     for (size_t i = 0; i < sizeof(mMiner.bytearray_target); ++i)
         DEBUG_SERIAL_PRINTF("%02x", mMiner.bytearray_target[i]);
     DEBUG_SERIAL_PRINTLN("");
+    #endif
 
     // get extranonce2 - use hardware RNG for random extranonce2
     char extranonce2_char[2 * mWorker.extranonce2_size + 1];
@@ -335,7 +354,7 @@ miner_data calculateMiningData(mining_subscribe& mWorker, mining_job mJob){
         DEBUG_SERIAL_PRINTLN("Coinbase truncated");
         return mMiner;
     }
-    DEBUG_SERIAL_PRINT("    coinbase: "); DEBUG_SERIAL_PRINTLN(coinbase_buffer);
+
     size_t str_len = strlen(coinbase_buffer)/2;
     constexpr size_t coinbase_capacity = sizeof(coinbase_buffer) / 2;
     if (str_len > coinbase_capacity)
@@ -353,7 +372,7 @@ miner_data calculateMiningData(mining_subscribe& mWorker, mining_job mJob){
         return mMiner;
     }
 
-    #ifdef DEBUG_MINING
+    #ifdef DEBUG_MINING_ALL
     DEBUG_SERIAL_PRINT("    extranonce2: "); DEBUG_SERIAL_PRINTLN(mWorker.extranonce2);
     DEBUG_SERIAL_PRINT("    coinbase: "); DEBUG_SERIAL_PRINTLN(coinbase_buffer);
     DEBUG_SERIAL_PRINT("    coinbase bytes - size: "); DEBUG_SERIAL_PRINTLN(res);
@@ -377,7 +396,7 @@ miner_data calculateMiningData(mining_subscribe& mWorker, mining_job mJob){
     mbedtls_sha256_finish_ret(&ctx, shaResult);
     mbedtls_sha256_free(&ctx);
 
-    #ifdef DEBUG_MINING
+    #ifdef DEBUG_MINING_ALL
     DEBUG_SERIAL_PRINT("    coinbase double sha: ");
     for (size_t i = 0; i < 32; i++)
         DEBUG_SERIAL_PRINTF("%02x", shaResult[i]);
@@ -399,7 +418,7 @@ miner_data calculateMiningData(mining_subscribe& mWorker, mining_job mJob){
             return mMiner;
         }
 
-        #ifdef DEBUG_MINING
+        #ifdef DEBUG_MINING_ALL
         DEBUG_SERIAL_PRINT("    merkle element    "); DEBUG_SERIAL_PRINT(k); DEBUG_SERIAL_PRINT(": "); DEBUG_SERIAL_PRINTLN(merkle_element);
         #endif
         for (size_t i = 0; i < 32; i++) {
@@ -407,7 +426,7 @@ miner_data calculateMiningData(mining_subscribe& mWorker, mining_job mJob){
           merkle_concatenated[32 + i] = bytearray[i];
         }
 
-        #ifdef DEBUG_MINING
+        #ifdef DEBUG_MINING_ALL
         DEBUG_SERIAL_PRINT("    merkle element    "); DEBUG_SERIAL_PRINT(k); DEBUG_SERIAL_PRINT(": "); DEBUG_SERIAL_PRINTLN(merkle_element);
         DEBUG_SERIAL_PRINT("    merkle concatenated: ");
         for (size_t i = 0; i < 64; i++)
@@ -426,7 +445,7 @@ miner_data calculateMiningData(mining_subscribe& mWorker, mining_job mJob){
         mbedtls_sha256_finish_ret(&ctx, mMiner.merkle_result);
         mbedtls_sha256_free(&ctx);
 
-        #ifdef DEBUG_MINING
+        #ifdef DEBUG_MINING_ALL
         DEBUG_SERIAL_PRINT("    merkle sha         : ");
         for (size_t i = 0; i < 32; i++)
             DEBUG_SERIAL_PRINTF("%02x", mMiner.merkle_result[i]);
@@ -435,14 +454,14 @@ miner_data calculateMiningData(mining_subscribe& mWorker, mining_job mJob){
     }
     // merkle root from merkle_result
     
-    DEBUG_SERIAL_PRINT("    merkle sha         : ");
+    // DEBUG_SERIAL_PRINT("    merkle sha         : ");
     char merkle_root[65];
     for (int i = 0; i < 32; i++) {
-      DEBUG_SERIAL_PRINTF("%02x", mMiner.merkle_result[i]);
+    //   DEBUG_SERIAL_PRINTF("%02x", mMiner.merkle_result[i]);
       snprintf(&merkle_root[i*2], 3, "%02x", mMiner.merkle_result[i]);
     }
     merkle_root[64] = 0;
-    DEBUG_SERIAL_PRINTLN("");
+    // DEBUG_SERIAL_PRINTLN("");
 
     // calculate blockheader
     // j.block_header = ''.join([j.version, j.prevhash, merkle_root, j.ntime, j.nbits])
@@ -457,7 +476,7 @@ miner_data calculateMiningData(mining_subscribe& mWorker, mining_job mJob){
         return mMiner;
     }
 
-    #ifdef DEBUG_MINING
+    #ifdef DEBUG_MINING_ALL
     DEBUG_SERIAL_PRINTLN("    blockheader: "); DEBUG_SERIAL_PRINT(blockheader);
     DEBUG_SERIAL_PRINTLN("    blockheader bytes "); DEBUG_SERIAL_PRINT(str_len); DEBUG_SERIAL_PRINT(" -> ");
     #endif
@@ -519,7 +538,7 @@ miner_data calculateMiningData(mining_subscribe& mWorker, mining_job mJob){
     }
 
 
-    #ifdef DEBUG_MINING
+    #ifdef DEBUG_MINING_ALL
     DEBUG_SERIAL_PRINT(" >>> bytearray_blockheader     : "); 
     for (size_t i = 0; i < 4; i++)
         DEBUG_SERIAL_PRINTF("%02x", mMiner.bytearray_blockheader[i]);

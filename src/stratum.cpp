@@ -19,7 +19,9 @@ std::atomic<unsigned long> id(1);
 // Thread-safe atomic increment (natural wraparound to 0 is acceptable for JSON-RPC ID)
 unsigned long getNextId(std::atomic<unsigned long>& id)
 {
-    return id.fetch_add(1, std::memory_order_relaxed);
+    unsigned long next_id = id.fetch_add(1, std::memory_order_relaxed);
+    DEBUG_SERIAL_PRINTF("[DEBUG] getNextId: returning %lu, next will be %lu\n", next_id, id.load(std::memory_order_relaxed));
+    return next_id;
 }
 
 //Verify Payload doesn't has zero length
@@ -59,8 +61,8 @@ bool tx_mining_subscribe(WiFiClient& client, mining_subscribe& mSubscribe)
     char payload[BUFFER] = {0};
 
     // Subscribe
-    id.store(1, std::memory_order_relaxed); //Initialize id messages
-    int written = snprintf(payload, BUFFER, "{\"id\": 1, \"method\": \"mining.subscribe\", \"params\": [\"NerdMinerV2/%s\"]}\n", CURRENT_VERSION);
+    unsigned long msg_id = getNextId(id);   // Get 1, increment to 2 for next message
+    int written = snprintf(payload, BUFFER, "{\"id\": %lu, \"method\": \"mining.subscribe\", \"params\": [\"NerdMinerV2/%s\"]}\n", msg_id, CURRENT_VERSION);
 
     if (written < 0 || written >= BUFFER) {
         DEBUG_SERIAL_PRINTF("ERROR: Buffer overflow in tx_mining_subscribe\n");
@@ -185,7 +187,7 @@ bool tx_mining_auth(WiFiClient& client, const char * user, const char * pass)
         return false;
     }
 
-    DEBUG_SERIAL_PRINTF("[WORKER] ==> Autorize work\n");
+    DEBUG_SERIAL_PRINTF("[WORKER] ==> Authorize work (user: %s)\n", user);
     DEBUG_SERIAL_PRINT("  Sending  : "); DEBUG_SERIAL_PRINTLN(payload);
     client.print(payload);
 
@@ -376,7 +378,7 @@ bool parse_mining_notify(const char* line, mining_job& mJob)
     mJob.ntime = String(ntime_ptr);
     mJob.clean_jobs = params[8].as<bool>();
 
-    #ifdef DEBUG_MINING
+    #ifdef DEBUG_MINING_ALL
     DEBUG_SERIAL_PRINT("    job_id: "); DEBUG_SERIAL_PRINTLN(mJob.job_id);
     DEBUG_SERIAL_PRINT("    prevhash: "); DEBUG_SERIAL_PRINTLN(mJob.prev_block_hash);
     DEBUG_SERIAL_PRINT("    coinb1: "); DEBUG_SERIAL_PRINTLN(mJob.coinb1);
@@ -391,15 +393,15 @@ bool parse_mining_notify(const char* line, mining_job& mJob)
     return true;
 }
 
-bool tx_mining_submit(WiFiClient& client, mining_subscribe mWorker, mining_job mJob, unsigned long nonce, unsigned long &submit_id)
+bool tx_mining_submit(WiFiClient& client, const char* worker_name, const char* job_id, const char* extranonce2, const char* ntime, unsigned long nonce, unsigned long &submit_id)
 {
     char payload[BUFFER] = {0};
 
-    // Validate wName is null-terminated and not too long
-    size_t wname_len = strnlen(mWorker.wName, sizeof(mWorker.wName));
-    if (wname_len >= sizeof(mWorker.wName))
+    // Validate worker_name is not too long
+    size_t wname_len = strnlen(worker_name, 80);
+    if (wname_len >= 80)
     {
-        DEBUG_SERIAL_PRINTF("ERROR: wName not properly null-terminated\n");
+        DEBUG_SERIAL_PRINTF("ERROR: worker_name too long\n");
         return false;
     }
 
@@ -423,10 +425,10 @@ bool tx_mining_submit(WiFiClient& client, mining_subscribe mWorker, mining_job m
 
     int written = snprintf(payload, BUFFER, "{\"id\": %lu, \"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"]}\n",
         submit_id,
-        mWorker.wName,
-        mJob.job_id.c_str(),
-        mWorker.extranonce2.c_str(),
-        mJob.ntime.c_str(),
+        worker_name,
+        job_id,
+        extranonce2,
+        ntime,
         nonce_hex
     );
 

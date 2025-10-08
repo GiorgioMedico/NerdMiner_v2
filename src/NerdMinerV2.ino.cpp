@@ -94,20 +94,21 @@ void setup()
     // button1.attachDoubleClick(alternateScreenRotation);
     // button1.attachLongPressStart(reset_configuration);
     // button1.attachMultiClick(alternateScreenState);
-    button1.setPressMs(2*SECOND_MS);
+    button1.setPressMs(1*SECOND_MS);
     button1.attachClick(alternateScreenState);
     button1.attachLongPressStart(reset_configuration);
   #endif
 
   #if defined(PIN_BUTTON_1) && defined(PIN_BUTTON_2) //Button 1 of two button device
-    button1.setPressMs(5*SECOND_MS);
+    button1.setPressMs(1*SECOND_MS);
+    // button1.attachClick(alternateScreenState);
     button1.attachClick(alternateScreenState);
-    button1.attachDoubleClick(alternateScreenRotation);
+    button1.attachLongPressStart(reset_configuration);
   #endif
 
   #if defined(PIN_BUTTON_2) //Button 2 of two button device
-    button2.setPressMs(5*SECOND_MS);
-    // switchToNextScreen removed - single screen mode only
+    button2.setPressMs(1*SECOND_MS);
+    button2.attachClick(alternateScreenState);
     button2.attachLongPressStart(reset_configuration);
   #endif
 
@@ -158,9 +159,6 @@ void setup()
  #endif
 
   /******** CREATE MINER TASKS *****/
-  //for (size_t i = 0; i < THREADS; i++) {
-  //  char *name = (char*) malloc(32);
-  //  sprintf(name, "(%d)", i);
 
   // Start mining tasks - HW pinned to Core 0, SW unpinned to fill gaps
   //BaseType_t res = xTaskCreate(runWorker, name, 35000, (void*)name, 1, NULL);
@@ -183,14 +181,16 @@ void setup()
 
 #if (SOC_CPU_CORES_NUM >= 2)
   #if defined(CONFIG_IDF_TARGET_ESP32)
-  xTaskCreate(minerWorkerSw, "MinerSw-1", 5000, (void*)1, 2, &minerTask2); // SW miner unpinned, Priority 2
+  // xTaskCreate(minerWorkerSw, "MinerSw-1", 5000, (void*)1, 2, &minerTask2); // SW miner unpinned, Priority 2
+  xTaskCreatePinnedToCore(minerWorkerSw, "MinerSw-1", 5000, (void*)1, 3, &minerTask2, 1);
   #else
-  xTaskCreate(minerWorkerSw, "MinerSw-1", 6000, (void*)1, 2, &minerTask2); // SW miner unpinned, Priority 2
+  // xTaskCreate(minerWorkerSw, "MinerSw-1", 6000, (void*)1, 2, &minerTask2); // SW miner unpinned, Priority 2
+  xTaskCreatePinnedToCore(minerWorkerSw, "MinerSw-1", 6000, (void*)1, 3, &minerTask2, 1);
   #endif
   esp_task_wdt_add(minerTask2);
 #endif
 
-  vTaskPrioritySet(NULL, 2); // Main loop priority reduced to 2 (was 4)
+  vTaskPrioritySet(NULL, 4);
 
   /******** MONITOR SETUP *****/
   setup_monitor();
@@ -222,5 +222,5 @@ void loop() {
 #endif
   wifiManagerProcess(); // avoid delays() in loop when non-blocking and other long running code
 
-  vTaskDelay(50 / portTICK_PERIOD_MS);
+  vTaskDelay(200 / portTICK_PERIOD_MS);
 }

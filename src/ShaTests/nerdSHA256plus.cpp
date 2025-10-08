@@ -490,7 +490,7 @@ IRAM_ATTR void nerd_sha256_bake(const uint32_t* digest, const uint8_t* dataIn, u
 
 
 // Force inline and optimize for speed with aggressive register allocation
-IRAM_ATTR __attribute__((optimize("O3","unroll-loops"))) bool nerd_sha256d_baked_nonce(const uint32_t* digest, const uint32_t* bake, uint32_t nonce_be, uint8_t* doubleHash)
+IRAM_ATTR bool nerd_sha256d_baked_nonce(const uint32_t* digest, const uint32_t* bake, uint32_t nonce_be, uint8_t* doubleHash)
 {
     uint32_t temp1, temp2;
     //*********** Init 1rst SHA ***********

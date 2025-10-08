@@ -18,7 +18,7 @@ extern std::atomic<uint32_t> templates;
 extern std::atomic<uint32_t> hashes;
 extern std::atomic<uint32_t> Mhashes;
 extern std::atomic<uint32_t> totalKHashes;
-extern std::atomic<uint32_t> elapsedKHs;
+extern std::atomic<float> elapsedKHs;
 extern std::atomic<uint64_t> upTime;
 
 extern std::atomic<uint32_t> shares; // increase if blockhash has 32 bits of zeroes
@@ -204,7 +204,10 @@ mining_data getMiningData(unsigned long mElapsed)
   // Direct String assignments - numeric values auto-convert
   data.completedShares = shares.load(std::memory_order_relaxed);
   data.totalMHashes = Mhashes.load(std::memory_order_relaxed);
-  data.totalKHashes = totalKHashes.load(std::memory_order_relaxed);
+  const uint32_t totalKHInt = totalKHashes.load(std::memory_order_relaxed);
+  const uint32_t hashRemainder = hashes.load(std::memory_order_relaxed) % 1000;
+  const float totalKH = static_cast<float>(totalKHInt) + static_cast<float>(hashRemainder) / 1000.0f;
+  data.totalKHashes = String(totalKH, 2);
   data.currentHashRate = getCurrentHashRate(mElapsed);
   data.templates = templates.load(std::memory_order_relaxed);
   data.valids = valids.load(std::memory_order_relaxed);
@@ -260,10 +263,13 @@ pool_data getPoolData(void)
         // DEBUG_SERIAL_PRINTLN(btcWallet);
         if (btcWallet.indexOf(".")>0) btcWallet = btcWallet.substring(0,btcWallet.indexOf("."));
 #ifdef SCREEN_WORKERS_ENABLE
-        DEBUG_SERIAL_PRINTLN("Pool API : " + poolAPIUrl+btcWallet);
-        http.begin(poolAPIUrl+btcWallet);
+        String poolUrl = poolAPIUrl+btcWallet;
+        DEBUG_SERIAL_PRINTLN("Pool API : " + poolUrl);
+        http.begin(poolUrl);
 #else
-        http.begin(String(getPublicPool)+btcWallet);
+        String poolUrl = String(getPublicPool)+btcWallet;
+        DEBUG_SERIAL_PRINTLN("Pool API : " + poolUrl);
+        http.begin(poolUrl);
 #endif
         int httpCode = http.GET();
         if (httpCode == HTTP_CODE_OK) 
@@ -303,13 +309,14 @@ pool_data getPoolData(void)
             doc.clear();
             mPoolUpdate = millis();
             DEBUG_SERIAL_PRINTLN("\n####### Pool Data OK!");
-        } 
+        }
         else
         {
-            DEBUG_SERIAL_PRINTLN("\n####### Pool Data HTTP Error!");
-            /* DEBUG_SERIAL_PRINTLN(httpCode);
+            DEBUG_SERIAL_PRINTF("\n####### Pool Data HTTP Error! Code: %d\n", httpCode);
             String payload = http.getString();
-            DEBUG_SERIAL_PRINTLN(payload); */
+            if (payload.length() > 0) {
+                DEBUG_SERIAL_PRINTLN("Response: " + payload);
+            }
             pData.bestDifficulty = "P";
             pData.workersHash = "E";
             pData.workersCount = 0;
