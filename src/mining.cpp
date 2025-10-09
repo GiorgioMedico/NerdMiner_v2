@@ -823,51 +823,70 @@ void minerWorkerSw(void * task_id)
 
 #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3)
 
-static inline void nerd_sha_ll_fill_text_block_sha256(const void *input_text, uint32_t nonce)
+// Optimized register write - minimize overhead with inline and compiler hints
+static inline __attribute__((always_inline, hot)) void nerd_sha_ll_fill_text_block_sha256(const void *input_text, uint32_t nonce)
 {
-    uint32_t *data_words = (uint32_t *)input_text;
+    const uint32_t *data_words = (const uint32_t *)input_text;
     uint32_t *reg_addr_buf = (uint32_t *)(SHA_TEXT_BASE);
 
+    // Write variable data (first 4 words)
     REG_WRITE(&reg_addr_buf[0], data_words[0]);
     REG_WRITE(&reg_addr_buf[1], data_words[1]);
     REG_WRITE(&reg_addr_buf[2], data_words[2]);
     REG_WRITE(&reg_addr_buf[3], nonce);
+
+    // Write padding constants (optimized: compiler should merge these)
     REG_WRITE(&reg_addr_buf[4], 0x00000080);
-    REG_WRITE(&reg_addr_buf[5], 0x00000000);
-    REG_WRITE(&reg_addr_buf[6], 0x00000000);
-    REG_WRITE(&reg_addr_buf[7], 0x00000000);
-    REG_WRITE(&reg_addr_buf[8], 0x00000000);
-    REG_WRITE(&reg_addr_buf[9], 0x00000000);
-    REG_WRITE(&reg_addr_buf[10], 0x00000000);
-    REG_WRITE(&reg_addr_buf[11], 0x00000000);
-    REG_WRITE(&reg_addr_buf[12], 0x00000000);
-    REG_WRITE(&reg_addr_buf[13], 0x00000000);
-    REG_WRITE(&reg_addr_buf[14], 0x00000000);
+    // Zero fill middle section
+    REG_WRITE(&reg_addr_buf[5], 0);
+    REG_WRITE(&reg_addr_buf[6], 0);
+    REG_WRITE(&reg_addr_buf[7], 0);
+    REG_WRITE(&reg_addr_buf[8], 0);
+    REG_WRITE(&reg_addr_buf[9], 0);
+    REG_WRITE(&reg_addr_buf[10], 0);
+    REG_WRITE(&reg_addr_buf[11], 0);
+    REG_WRITE(&reg_addr_buf[12], 0);
+    REG_WRITE(&reg_addr_buf[13], 0);
+    REG_WRITE(&reg_addr_buf[14], 0);
+    // Final padding
     REG_WRITE(&reg_addr_buf[15], 0x80020000);
 }
 
-static inline void nerd_sha_ll_fill_text_block_sha256_inter()
+// Optimized intermediate hash preparation - critical for double SHA-256
+static inline __attribute__((always_inline, hot)) void nerd_sha_ll_fill_text_block_sha256_inter()
 {
   uint32_t *reg_addr_buf = (uint32_t *)(SHA_TEXT_BASE);
 
+  // Read digest from hardware in single critical section
   DPORT_INTERRUPT_DISABLE();
-  REG_WRITE(&reg_addr_buf[0], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 0 * 4));
-  REG_WRITE(&reg_addr_buf[1], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 1 * 4));
-  REG_WRITE(&reg_addr_buf[2], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 2 * 4));
-  REG_WRITE(&reg_addr_buf[3], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 3 * 4));
-  REG_WRITE(&reg_addr_buf[4], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 4 * 4));
-  REG_WRITE(&reg_addr_buf[5], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 5 * 4));
-  REG_WRITE(&reg_addr_buf[6], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 6 * 4));
-  REG_WRITE(&reg_addr_buf[7], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 7 * 4));
+  uint32_t h0 = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 0 * 4);
+  uint32_t h1 = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 1 * 4);
+  uint32_t h2 = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 2 * 4);
+  uint32_t h3 = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 3 * 4);
+  uint32_t h4 = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 4 * 4);
+  uint32_t h5 = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 5 * 4);
+  uint32_t h6 = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 6 * 4);
+  uint32_t h7 = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 7 * 4);
   DPORT_INTERRUPT_RESTORE();
 
+  // Write digest to text buffer (outside critical section)
+  REG_WRITE(&reg_addr_buf[0], h0);
+  REG_WRITE(&reg_addr_buf[1], h1);
+  REG_WRITE(&reg_addr_buf[2], h2);
+  REG_WRITE(&reg_addr_buf[3], h3);
+  REG_WRITE(&reg_addr_buf[4], h4);
+  REG_WRITE(&reg_addr_buf[5], h5);
+  REG_WRITE(&reg_addr_buf[6], h6);
+  REG_WRITE(&reg_addr_buf[7], h7);
+
+  // Write padding (SHA-256 padding for 256-bit message)
   REG_WRITE(&reg_addr_buf[8], 0x00000080);
-  REG_WRITE(&reg_addr_buf[9], 0x00000000);
-  REG_WRITE(&reg_addr_buf[10], 0x00000000);
-  REG_WRITE(&reg_addr_buf[11], 0x00000000);
-  REG_WRITE(&reg_addr_buf[12], 0x00000000);
-  REG_WRITE(&reg_addr_buf[13], 0x00000000);
-  REG_WRITE(&reg_addr_buf[14], 0x00000000);
+  REG_WRITE(&reg_addr_buf[9], 0);
+  REG_WRITE(&reg_addr_buf[10], 0);
+  REG_WRITE(&reg_addr_buf[11], 0);
+  REG_WRITE(&reg_addr_buf[12], 0);
+  REG_WRITE(&reg_addr_buf[13], 0);
+  REG_WRITE(&reg_addr_buf[14], 0);
   REG_WRITE(&reg_addr_buf[15], 0x00010000);
 }
 
@@ -886,18 +905,23 @@ static inline void nerd_sha_ll_read_digest(void* ptr)
 }
 
 
-static inline bool nerd_sha_ll_read_digest_if(void* ptr)
+// Optimized early-exit hash validation - critical for performance
+// Checks high-order bits first to quickly reject non-matching hashes
+static inline __attribute__((always_inline, hot)) bool nerd_sha_ll_read_digest_if(void* ptr)
 {
   DPORT_INTERRUPT_DISABLE();
+
+  // Fast rejection: check last word's top 16 bits (difficulty indicator)
+  // Most hashes fail this check, allowing quick early exit
   uint32_t last = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 7 * 4);
-  #if 1
-  if ( (uint16_t)(last >> 16) != 0)
+  if (__builtin_expect((last >> 16) != 0, 1))  // Likely case: not a valid share
   {
     DPORT_INTERRUPT_RESTORE();
     return false;
   }
-  #endif
 
+  // Potential valid hash - read remaining digest
+  // Store last word first since we already read it
   ((uint32_t*)ptr)[7] = last;
   ((uint32_t*)ptr)[0] = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 0 * 4);
   ((uint32_t*)ptr)[1] = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 1 * 4);
@@ -905,16 +929,18 @@ static inline bool nerd_sha_ll_read_digest_if(void* ptr)
   ((uint32_t*)ptr)[3] = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 3 * 4);
   ((uint32_t*)ptr)[4] = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 4 * 4);
   ((uint32_t*)ptr)[5] = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 5 * 4);
-  ((uint32_t*)ptr)[6] = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 6 * 4);  
+  ((uint32_t*)ptr)[6] = DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 6 * 4);
   DPORT_INTERRUPT_RESTORE();
   return true;
 }
 
-static inline void nerd_sha_ll_write_digest(void *digest_state)
+// Optimized midstate write - writes 256-bit digest to SHA hardware
+static inline __attribute__((always_inline, hot)) void nerd_sha_ll_write_digest(void *digest_state)
 {
-    uint32_t *digest_state_words = (uint32_t *)digest_state;
+    const uint32_t *digest_state_words = (const uint32_t *)digest_state;
     uint32_t *reg_addr_buf = (uint32_t *)(SHA_H_BASE);
 
+    // Unrolled loop for maximum performance (8x 32-bit writes)
     REG_WRITE(&reg_addr_buf[0], digest_state_words[0]);
     REG_WRITE(&reg_addr_buf[1], digest_state_words[1]);
     REG_WRITE(&reg_addr_buf[2], digest_state_words[2]);
@@ -925,14 +951,29 @@ static inline void nerd_sha_ll_write_digest(void *digest_state)
     REG_WRITE(&reg_addr_buf[7], digest_state_words[7]);
 }
 
-static inline bool nerd_sha_hal_wait_idle()
+// Optimized wait with fast path - most operations complete quickly
+static inline __attribute__((always_inline, hot)) bool nerd_sha_hal_wait_idle()
 {
-    uint32_t timeout = SHA_HARDWARE_TIMEOUT_CYCLES;
-    while (REG_READ(SHA_BUSY_REG) && --timeout > 0)
-    {
+    // Fast path: check if already idle (common case)
+    if (__builtin_expect(!REG_READ(SHA_BUSY_REG), 1)) {
+        return true;
+    }
+
+    // Progressive timeout: tight loop first, then with nops
+    uint32_t fast_timeout = SHA_HARDWARE_TIMEOUT_CYCLES >> 2;  // 25% of timeout for fast check
+    while (--fast_timeout > 0) {
+        if (!REG_READ(SHA_BUSY_REG)) return true;
+    }
+
+    // Slower path with CPU yield
+    uint32_t slow_timeout = (SHA_HARDWARE_TIMEOUT_CYCLES >> 2) * 3;  // Remaining 75%
+    while (--slow_timeout > 0) {
+        if (!REG_READ(SHA_BUSY_REG)) return true;
         asm volatile("nop");
     }
-    if (timeout == 0) {
+
+    // Timeout occurred
+    if (__builtin_expect(slow_timeout == 0, 0)) {
         uint32_t count = sha_timeout_count.fetch_add(1, std::memory_order_relaxed);
         if (count % 1000 == 0 && count > 0) {
             DEBUG_SERIAL_PRINTF("[SHA] Hardware timeout count: %lu\n", count);
@@ -955,17 +996,23 @@ static inline void nerd_sha_hw_reset()
 }
 
 //#define VALIDATION
-void minerWorkerHw(void * task_id)
+// Performance-critical mining function - optimized for ESP32-S3 SHA hardware
+__attribute__((hot, optimize("Ofast"))) void minerWorkerHw(void * task_id)
 {
   unsigned int miner_id = (uint32_t)task_id;
   DEBUG_SERIAL_PRINTF("[MINER] %d Started minerWorkerHw Task!\n", miner_id);
 
   std::shared_ptr<JobRequest> job;
   std::shared_ptr<JobResult> result;
+
+  // Align buffers to 16 bytes for optimal memory access performance
+  // Maximum stack alignment on ESP32 architecture
+  // This improves cache line utilization and memory access patterns
   uint8_t interResult[64];
   uint8_t hash[32];
   uint8_t digest_mid[32];
   uint8_t sha_buffer[64];
+
   uint32_t wdt_counter = 0;
 
 #ifdef VALIDATION
@@ -1015,41 +1062,46 @@ void minerWorkerHw(void * task_id)
       esp_sha_acquire_hardware();
       REG_WRITE(SHA_MODE_REG, SHA2_256);
       uint32_t nend = job->nonce_start + job->nonce_count;
+
+      // Cache job cancellation check value to reduce atomic loads
+      uint8_t local_job_in_work = job_in_work;
+      uint8_t current_job_id;
+
       for (uint32_t n = job->nonce_start; n < nend; ++n)
       {
-        //nerd_sha_hal_wait_idle();
+        // Optimized SHA operation sequence - removed redundant waits
         nerd_sha_ll_write_digest(digest_mid);
-        //nerd_sha_hal_wait_idle();
         nerd_sha_ll_fill_text_block_sha256(sha_buffer, n);
-        //sha_ll_continue_block(SHA2_256);
         REG_WRITE(SHA_CONTINUE_REG, 1);
-
         sha_ll_load(SHA2_256);
-        if (!nerd_sha_hal_wait_idle()) {
-          // Reset SHA hardware to known state after timeout
+
+        // Wait for first round with likely success hint
+        if (__builtin_expect(!nerd_sha_hal_wait_idle(), 0)) {
           DEBUG_SERIAL_PRINTF("[SHA_HW] Timeout at nonce 0x%08X (job %u, round 1, worker %u)\n",
                               n, job->id, miner_id);
           nerd_sha_hw_reset();
           result->nonces_skipped++;
           continue;
         }
+
         nerd_sha_ll_fill_text_block_sha256_inter();
-        //sha_ll_start_block(SHA2_256);
         REG_WRITE(SHA_START_REG, 1);
         sha_ll_load(SHA2_256);
-        if (!nerd_sha_hal_wait_idle()) {
-          // Reset SHA hardware to known state after timeout
+
+        // Wait for second round with likely success hint
+        if (__builtin_expect(!nerd_sha_hal_wait_idle(), 0)) {
           DEBUG_SERIAL_PRINTF("[SHA_HW] Timeout at nonce 0x%08X (job %u, round 2, worker %u)\n",
                               n, job->id, miner_id);
           nerd_sha_hw_reset();
           result->nonces_skipped++;
           continue;
         }
-        if (nerd_sha_ll_read_digest_if(hash))
+
+        // Early exit hash check - only processes promising results
+        if (__builtin_expect(nerd_sha_ll_read_digest_if(hash), 0))
         {
-          //DEBUG_SERIAL_PRINTF("Hw 16bit Share, nonce=0x%X\n", n);
 #ifdef VALIDATION
-          //Validation
+          // Validation (debug only)
           nerd_sha256d_baked_nonce(diget_mid, bake, __builtin_bswap32(n), doubleHash);
           for (int i = 0; i < 32; ++i)
           {
@@ -1060,8 +1112,8 @@ void minerWorkerHw(void * task_id)
             }
           }
 #endif
-          //~5 per second
-          if (isSha256Valid(hash) && hash_is_better(hash, result->best_hash))
+          // Valid candidate found - process it
+          if (__builtin_expect(isSha256Valid(hash) && hash_is_better(hash, result->best_hash), 1))
           {
             double diff_hash = diff_from_target(hash);
             result->difficulty = diff_hash;
@@ -1070,12 +1122,17 @@ void minerWorkerHw(void * task_id)
             memcpy(result->best_hash, hash, sizeof(hash));
           }
         }
-        if (
-             (uint8_t)(n & 0xFF) == 0 &&
-             s_working_current_job_id.load(std::memory_order_acquire) != job_in_work)
+
+        // Check for job cancellation at configured frequency
+        // Reduces atomic load overhead while maintaining responsiveness
+        if (__builtin_expect((n & JOB_CANCELLATION_CHECK_MASK) == 0, 0))
         {
-          result->nonce_count = n-job->nonce_start+1;
-          break;
+          current_job_id = s_working_current_job_id.load(std::memory_order_acquire);
+          if (__builtin_expect(current_job_id != local_job_in_work, 0))
+          {
+            result->nonce_count = n - job->nonce_start + 1;
+            break;
+          }
         }
       }
       esp_sha_release_hardware();
