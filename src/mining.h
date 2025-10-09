@@ -13,7 +13,7 @@
 // Network safety
 #define MAX_POOL_LINE_SIZE      4096
 
-#define SHA_HARDWARE_TIMEOUT_CYCLES 100000
+#define SHA_HARDWARE_TIMEOUT_CYCLES 500000
 
 // Job cancellation check frequency (power of 2 for efficient masking)
 // Check every N nonces for new job - higher = less overhead, slower response
@@ -21,11 +21,11 @@
 #define JOB_CANCELLATION_CHECK_MASK 0x3FF
 
 // Job queue sizes (increased for better miner throughput)
-#define JOB_QUEUE_SIZE          10
-#define RESULT_LIST_SIZE        16
-#define SUBMISSION_MAP_MAX       32
+#define JOB_QUEUE_SIZE          14
+#define RESULT_LIST_SIZE        20
+#define SUBMISSION_MAP_MAX       40
 
-#define WDT_COUNTER 10 //8
+#define WDT_COUNTER 15 //8
 
 //#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3)
 #ifndef HARDWARE_SHA256
@@ -33,12 +33,10 @@
 #endif
 //#endif
 
-#define TARGET_BUFFER_SIZE 64
-
 // Nonce start values for different mining modes
 #define NONCE_START_RANDOM     0xDA54E700  // Random start nonce (non-zero for compatibility)
 
-#define JOB_REFILL_BATCH           6   // Incremental refill: jobs created per batch
+#define JOB_REFILL_BATCH           8   // Incremental refill: jobs created per batch
 #define JOB_TIMEOUT_MS             (10*60*1000)  // 10 minutes without new job triggers reconnect
 
 

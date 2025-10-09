@@ -23,7 +23,7 @@
 // #define NONCE_PER_JOB_SW 4096
 // #define NONCE_PER_JOB_HW 16*1024
 #define NONCE_PER_JOB_SW 2*16384
-#define NONCE_PER_JOB_HW 4*64*1024
+#define NONCE_PER_JOB_HW 6*64*1024
 
 //#define SHA256_VALIDATE
 #define RANDOM_NONCE
@@ -227,12 +227,16 @@ static inline void initialize_best_hash(JobResult& result)
   }
 }
 
-static std::mutex s_job_mutex;
+static std::mutex s_job_mutex_sw;
+#ifdef HARDWARE_SHA256
+static std::mutex s_job_mutex_hw;
+#endif
 std::list<std::shared_ptr<JobRequest>> s_job_request_list_sw;
+std::list<std::shared_ptr<JobResult>> s_job_result_list_sw;
 #ifdef HARDWARE_SHA256
 std::list<std::shared_ptr<JobRequest>> s_job_request_list_hw;
+std::list<std::shared_ptr<JobResult>> s_job_result_list_hw;
 #endif
-std::list<std::shared_ptr<JobResult>> s_job_result_list;
 
 // Atomic job ID for cross-thread work cancellation (proper memory barriers)
 static std::atomic<uint8_t> s_working_current_job_id{0xFF};
@@ -267,13 +271,17 @@ struct Submission
 static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, std::shared_ptr<Submission>> &submission_map)
 {
   {
-    std::lock_guard<std::mutex> lock(s_job_mutex);
-    s_job_result_list.clear();
+    std::lock_guard<std::mutex> lock_sw(s_job_mutex_sw);
+    s_job_result_list_sw.clear();
     s_job_request_list_sw.clear();
-    #ifdef HARDWARE_SHA256
-    s_job_request_list_hw.clear();
-    #endif
   }
+  #ifdef HARDWARE_SHA256
+  {
+    std::lock_guard<std::mutex> lock_hw(s_job_mutex_hw);
+    s_job_result_list_hw.clear();
+    s_job_request_list_hw.clear();
+  }
+  #endif
   s_working_current_job_id.store(0xFF, std::memory_order_release);
   job_pool = 0xFFFFFFFF;
 
@@ -447,12 +455,15 @@ void runStratumWorker(void *name)
 
                                           // Clear job lists to prevent stale work
                                           {
-                                            std::lock_guard<std::mutex> lock(s_job_mutex);
+                                            std::lock_guard<std::mutex> lock_sw(s_job_mutex_sw);
                                             s_job_request_list_sw.clear();
-                                            #ifdef HARDWARE_SHA256
-                                            s_job_request_list_hw.clear();
-                                            #endif
                                           }
+                                          #ifdef HARDWARE_SHA256
+                                          {
+                                            std::lock_guard<std::mutex> lock_hw(s_job_mutex_hw);
+                                            s_job_request_list_hw.clear();
+                                          }
+                                          #endif
                                           //Increse templates readed
                                           templates.fetch_add(1, std::memory_order_relaxed);
                                           job_pool++;
@@ -525,12 +536,15 @@ void runStratumWorker(void *name)
 
                                           // Quick batch insert under lock
                                           {
-                                            std::lock_guard<std::mutex> lock(s_job_mutex);
+                                            std::lock_guard<std::mutex> lock_sw(s_job_mutex_sw);
                                             s_job_request_list_sw.splice(s_job_request_list_sw.end(), new_sw_jobs);
-                                            #ifdef HARDWARE_SHA256
-                                            s_job_request_list_hw.splice(s_job_request_list_hw.end(), new_hw_jobs);
-                                            #endif
                                           }
+                                          #ifdef HARDWARE_SHA256
+                                          {
+                                            std::lock_guard<std::mutex> lock_hw(s_job_mutex_hw);
+                                            s_job_request_list_hw.splice(s_job_request_list_hw.end(), new_hw_jobs);
+                                          }
+                                          #endif
                                       } 
                                       else
                                       {
@@ -593,7 +607,7 @@ void runStratumWorker(void *name)
 
     std::list<std::shared_ptr<JobResult>> job_result_list;
 
-    vTaskDelay(200 / portTICK_PERIOD_MS);
+    vTaskDelay(250 / portTICK_PERIOD_MS);
 
 
     if (job_pool != 0xFFFFFFFF)
@@ -606,13 +620,17 @@ void runStratumWorker(void *name)
 
       size_t current_sw_size, current_hw_size = 0;
       {
-        // Quick check of queue sizes
-        std::lock_guard<std::mutex> lock(s_job_mutex);
+        // Quick check of SW queue size
+        std::lock_guard<std::mutex> lock_sw(s_job_mutex_sw);
         current_sw_size = s_job_request_list_sw.size();
-        #ifdef HARDWARE_SHA256
-        current_hw_size = s_job_request_list_hw.size();
-        #endif
       }
+      #ifdef HARDWARE_SHA256
+      {
+        // Quick check of HW queue size
+        std::lock_guard<std::mutex> lock_hw(s_job_mutex_hw);
+        current_hw_size = s_job_request_list_hw.size();
+      }
+      #endif
 
       // Incremental refill SW: Create jobs outside lock
       constexpr size_t REFILL_THRESHOLD_SW = JOB_QUEUE_SIZE / 2;
@@ -649,21 +667,27 @@ void runStratumWorker(void *name)
       }
       #endif
 
-      // Fast insertion under lock using splice
+      // Fast insertion under lock using splice - separate locks for SW and HW
       {
-        std::lock_guard<std::mutex> lock(s_job_mutex);
-        job_result_list.insert(job_result_list.end(), s_job_result_list.begin(), s_job_result_list.end());
-        s_job_result_list.clear();
+        std::lock_guard<std::mutex> lock_sw(s_job_mutex_sw);
+        job_result_list.insert(job_result_list.end(), s_job_result_list_sw.begin(), s_job_result_list_sw.end());
+        s_job_result_list_sw.clear();
 
         if (!new_jobs_sw.empty()) {
           s_job_request_list_sw.splice(s_job_request_list_sw.end(), new_jobs_sw);
         }
-        #ifdef HARDWARE_SHA256
+      }
+      #ifdef HARDWARE_SHA256
+      {
+        std::lock_guard<std::mutex> lock_hw(s_job_mutex_hw);
+        job_result_list.insert(job_result_list.end(), s_job_result_list_hw.begin(), s_job_result_list_hw.end());
+        s_job_result_list_hw.clear();
+
         if (!new_jobs_hw.empty()) {
           s_job_request_list_hw.splice(s_job_request_list_hw.end(), new_jobs_hw);
         }
-        #endif
       }
+      #endif
     }
 
     // Batch atomic hash updates: accumulate locally, update once at end
@@ -745,13 +769,13 @@ void minerWorkerSw(void * task_id)
   while (1)
   {
     {
-      std::lock_guard<std::mutex> lock(s_job_mutex);
+      std::lock_guard<std::mutex> lock_sw(s_job_mutex_sw);
       if (result)
       {
-        if (s_job_result_list.size() < RESULT_LIST_SIZE) 
+        if (s_job_result_list_sw.size() < RESULT_LIST_SIZE)
         {
-            s_job_result_list.push_back(result);
-            // DEBUG_SERIAL_PRINTF("[RESULT] ✅ Diff: %.8f | Nonce: %u | Stored (%u/%u)\n", result->difficulty, result->nonce, (unsigned)s_job_result_list.size(), RESULT_LIST_SIZE);
+            s_job_result_list_sw.push_back(result);
+            // DEBUG_SERIAL_PRINTF("[RESULT] ✅ Diff: %.8f | Nonce: %u | Stored (%u/%u)\n", result->difficulty, result->nonce, (unsigned)s_job_result_list_sw.size(), RESULT_LIST_SIZE);
         }
 
         result.reset();
@@ -782,10 +806,9 @@ void minerWorkerSw(void * task_id)
         uint32_t nonce = job->nonce_start + n;
         if (nerd_sha256d_baked_nonce(job->midstate, job->bake, __builtin_bswap32(nonce), hash))
         {
-          if (isSha256Valid(hash) && hash_is_better(hash, result->best_hash))
+          if (__builtin_expect(isSha256Valid(hash) && hash_is_better(hash, result->best_hash), 1))
           {
-            double diff_hash = diff_from_target(hash);
-            result->difficulty = diff_hash;
+            result->difficulty = diff_from_target(hash);
             result->nonce = nonce;
             memcpy(result->hash, hash, 32);
             memcpy(result->best_hash, hash, 32);
@@ -1018,11 +1041,11 @@ __attribute__((hot, optimize("Ofast"))) void minerWorkerHw(void * task_id)
   while (1)
   {
     {
-      std::lock_guard<std::mutex> lock(s_job_mutex);
+      std::lock_guard<std::mutex> lock_hw(s_job_mutex_hw);
       if (result)
       {
-        if (s_job_result_list.size() < RESULT_LIST_SIZE)
-          s_job_result_list.push_back(result);
+        if (s_job_result_list_hw.size() < RESULT_LIST_SIZE)
+          s_job_result_list_hw.push_back(result);
         result.reset();
       }
       if (!s_job_request_list_hw.empty())
@@ -1285,11 +1308,11 @@ void minerWorkerHw(void * task_id)
   while (1)
   {
     {
-      std::lock_guard<std::mutex> lock(s_job_mutex);
+      std::lock_guard<std::mutex> lock_hw(s_job_mutex_hw);
       if (result)
       {
-        if (s_job_result_list.size() < RESULT_LIST_SIZE)
-          s_job_result_list.push_back(result);
+        if (s_job_result_list_hw.size() < RESULT_LIST_SIZE)
+          s_job_result_list_hw.push_back(result);
         result.reset();
       }
       if (!s_job_request_list_hw.empty())
@@ -1372,7 +1395,7 @@ void minerWorkerHw(void * task_id)
         if (nerd_sha_ll_read_digest_swap_if(hash))
         {
           //~5 per second
-          if (isSha256Valid(hash) && hash_is_better(hash, result->best_hash))
+          if (__builtin_expect(isSha256Valid(hash) && hash_is_better(hash, result->best_hash), 1))
           {
             result->difficulty = diff_from_target(hash);
             result->nonce = job->nonce_start+n;
