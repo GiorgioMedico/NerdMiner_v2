@@ -1,10 +1,12 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <ArduinoJson.h>
 #include "mbedtls/md.h"
 #include "HTTPClient.h"
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <cmath>
+#include <cstring>
 #include <list>
 #include <atomic>
 #include "mining.h"
@@ -36,6 +38,66 @@ WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 3600, 3600000);  // 1 hour update interval
 pool_data pData;
 String poolAPIUrl;
+
+static const String& getSanitizedWallet()
+{
+    static String sanitizedWallet;
+    static char lastWalletSetting[sizeof(Settings.BtcWallet)] = {0};
+
+    if (strncmp(lastWalletSetting, Settings.BtcWallet, sizeof(lastWalletSetting)) != 0)
+    {
+        strncpy(lastWalletSetting, Settings.BtcWallet, sizeof(lastWalletSetting));
+        lastWalletSetting[sizeof(lastWalletSetting) - 1] = '\0';
+        sanitizedWallet = lastWalletSetting;
+        const int dotIndex = sanitizedWallet.indexOf('.');
+        if (dotIndex > 0)
+        {
+            sanitizedWallet.remove(dotIndex);
+        }
+    }
+
+    return sanitizedWallet;
+}
+
+static const String& getCachedPoolUrl()
+{
+    static String cachedUrl;
+    static String lastBaseUrl;
+    static String lastWallet;
+#ifdef SCREEN_WORKERS_ENABLE
+    static String lastPoolAddress;
+    static int lastPoolPort = -1;
+#endif
+
+#ifdef SCREEN_WORKERS_ENABLE
+    if (poolAPIUrl.isEmpty() ||
+        Settings.PoolAddress != lastPoolAddress ||
+        Settings.PoolPort != lastPoolPort)
+    {
+        poolAPIUrl = getPoolAPIUrl();
+        lastPoolAddress = Settings.PoolAddress;
+        lastPoolPort = Settings.PoolPort;
+    }
+    const String& baseUrl = poolAPIUrl;
+#else
+    static const String baseUrl = String(getPublicPool);
+#endif
+
+    const String& wallet = getSanitizedWallet();
+
+    const String& baseRef = baseUrl;
+
+    if (baseRef != lastBaseUrl || wallet != lastWallet)
+    {
+        cachedUrl.reserve(baseRef.length() + wallet.length());
+        cachedUrl = baseRef;
+        cachedUrl += wallet;
+        lastBaseUrl = baseRef;
+        lastWallet = wallet;
+    }
+
+    return cachedUrl;
+}
 
 
 void setup_monitor(void)
@@ -259,64 +321,73 @@ pool_data getPoolData(void)
         HTTPClient http;
         http.setTimeout(10000);
 
-        String btcWallet = Settings.BtcWallet;
-        // DEBUG_SERIAL_PRINTLN(btcWallet);
-        if (btcWallet.indexOf(".")>0) btcWallet = btcWallet.substring(0,btcWallet.indexOf("."));
-#ifdef SCREEN_WORKERS_ENABLE
-        String poolUrl = poolAPIUrl+btcWallet;
+        const String& poolUrl = getCachedPoolUrl();
         DEBUG_SERIAL_PRINTLN("Pool API : " + poolUrl);
-        http.begin(poolUrl);
-#else
-        String poolUrl = String(getPublicPool)+btcWallet;
-        DEBUG_SERIAL_PRINTLN("Pool API : " + poolUrl);
-        http.begin(poolUrl);
-#endif
+        http.begin(poolUrl.c_str());
         int httpCode = http.GET();
         if (httpCode == HTTP_CODE_OK) 
         {
-            String payload = http.getString();
-            // DEBUG_SERIAL_PRINTLN(payload);
-            StaticJsonDocument<300> filter;
+            StaticJsonDocument<128> filter;
             filter["bestDifficulty"] = true;
             filter["workersCount"] = true;
-            filter["workers"][0]["sessionId"] = true;
             filter["workers"][0]["hashRate"] = true;
-            StaticJsonDocument<2048> doc;
-            deserializeJson(doc, payload, DeserializationOption::Filter(filter));
-            //DEBUG_SERIAL_PRINTLN(serializeJsonPretty(doc, Serial));
-            if (doc.containsKey("workersCount")) pData.workersCount = doc["workersCount"].as<int>();
-            const JsonArray& workers = doc["workers"].as<JsonArray>();
-            double totalhashs = 0;
-            for (const JsonObject& worker : workers) 
+            StaticJsonDocument<1024> doc;
+            DeserializationError error = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
+            if (!error)
             {
-              totalhashs += worker["hashRate"].as<double>();
-              /* DEBUG_SERIAL_PRINT(worker["sessionId"].as<String>()+": ");
-              DEBUG_SERIAL_PRINT(" - "+worker["hashRate"].as<String>()+": ");
-              DEBUG_SERIAL_PRINTLN(totalhashs); */
-            }
-            char totalhashs_s[16] = {0};
-            suffix_string(totalhashs, totalhashs_s, 16, 0);
-            pData.workersHash = String(totalhashs_s);
+                if (doc.containsKey("workersCount"))
+                    pData.workersCount = doc["workersCount"].as<int>();
 
-            double temp;
-            if (doc.containsKey("bestDifficulty")) 
-            {
-            temp = doc["bestDifficulty"].as<double>();
-            char best_diff_string[16] = {0};
-            suffix_string(temp, best_diff_string, 16, 0);
-            pData.bestDifficulty = String(best_diff_string);
+                double totalhashs = 0.0;
+                double bestDifficultyValue = NAN;
+                JsonArrayConst workers = doc["workers"].as<JsonArrayConst>();
+                if (!workers.isNull())
+                {
+                    for (JsonObjectConst worker : workers)
+                    {
+                        totalhashs += worker["hashRate"].as<double>();
+                    }
+                }
+                char totalhashs_s[16] = {0};
+                suffix_string(totalhashs, totalhashs_s, sizeof(totalhashs_s), 0);
+                pData.workersHash = String(totalhashs_s);
+
+                if (doc.containsKey("bestDifficulty"))
+                {
+                    bestDifficultyValue = doc["bestDifficulty"].as<double>();
+                    char best_diff_string[16] = {0};
+                    suffix_string(bestDifficultyValue, best_diff_string, sizeof(best_diff_string), 0);
+                    pData.bestDifficulty = String(best_diff_string);
+                }
+                #ifdef DEBUG_MINING_ALL
+                DEBUG_SERIAL_PRINTF("[POOL] workers=%d totalHash=%s raw=%.2f bestDifficulty=%s raw=%.2f\n",
+                                    pData.workersCount,
+                                    pData.workersHash.c_str(),
+                                    totalhashs,
+                                    pData.bestDifficulty.c_str(),
+                                    bestDifficultyValue);
+                #endif
+                mPoolUpdate = millis();
+                DEBUG_SERIAL_PRINTLN("\n####### Pool Data OK!");
             }
-            doc.clear();
-            mPoolUpdate = millis();
-            DEBUG_SERIAL_PRINTLN("\n####### Pool Data OK!");
+            else
+            {
+                DEBUG_SERIAL_PRINTF("\n####### ❌ Pool Data JSON Error! (%s)\n", error.c_str());
+                pData.bestDifficulty = "P";
+                pData.workersHash = "E";
+                pData.workersCount = 0;
+            }
         }
         else
         {
             DEBUG_SERIAL_PRINTF("\n####### Pool Data HTTP Error! Code: %d\n", httpCode);
             String payload = http.getString();
+            
+            #ifdef DEBUG_MINING_ALL
             if (payload.length() > 0) {
                 DEBUG_SERIAL_PRINTLN("Response: " + payload);
             }
+            #endif
             pData.bestDifficulty = "P";
             pData.workersHash = "E";
             pData.workersCount = 0;
