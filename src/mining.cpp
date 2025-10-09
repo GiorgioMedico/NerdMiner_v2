@@ -23,7 +23,7 @@
 // #define NONCE_PER_JOB_SW 4096
 // #define NONCE_PER_JOB_HW 16*1024
 #define NONCE_PER_JOB_SW 2*16384
-#define NONCE_PER_JOB_HW 4*64*1024
+#define NONCE_PER_JOB_HW 6*64*1024
 
 //#define SHA256_VALIDATE
 #define RANDOM_NONCE
@@ -782,10 +782,9 @@ void minerWorkerSw(void * task_id)
         uint32_t nonce = job->nonce_start + n;
         if (nerd_sha256d_baked_nonce(job->midstate, job->bake, __builtin_bswap32(nonce), hash))
         {
-          if (isSha256Valid(hash) && hash_is_better(hash, result->best_hash))
+          if (__builtin_expect(isSha256Valid(hash) && hash_is_better(hash, result->best_hash), 1))
           {
-            double diff_hash = diff_from_target(hash);
-            result->difficulty = diff_hash;
+            result->difficulty = diff_from_target(hash);
             result->nonce = nonce;
             memcpy(result->hash, hash, 32);
             memcpy(result->best_hash, hash, 32);
@@ -1372,7 +1371,7 @@ void minerWorkerHw(void * task_id)
         if (nerd_sha_ll_read_digest_swap_if(hash))
         {
           //~5 per second
-          if (isSha256Valid(hash) && hash_is_better(hash, result->best_hash))
+          if (__builtin_expect(isSha256Valid(hash) && hash_is_better(hash, result->best_hash), 1))
           {
             result->difficulty = diff_from_target(hash);
             result->nonce = job->nonce_start+n;

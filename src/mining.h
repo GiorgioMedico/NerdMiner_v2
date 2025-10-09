@@ -13,7 +13,7 @@
 // Network safety
 #define MAX_POOL_LINE_SIZE      4096
 
-#define SHA_HARDWARE_TIMEOUT_CYCLES 100000
+#define SHA_HARDWARE_TIMEOUT_CYCLES 200000
 
 // Job cancellation check frequency (power of 2 for efficient masking)
 // Check every N nonces for new job - higher = less overhead, slower response
@@ -25,7 +25,7 @@
 #define RESULT_LIST_SIZE        16
 #define SUBMISSION_MAP_MAX       32
 
-#define WDT_COUNTER 10 //8
+#define WDT_COUNTER 20 //8
 
 //#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3)
 #ifndef HARDWARE_SHA256
