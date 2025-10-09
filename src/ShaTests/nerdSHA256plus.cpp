@@ -12,7 +12,9 @@
 
 *************************************************************************************/
 
+#ifndef NDEBUG
 #define NDEBUG
+#endif
 #include <stdio.h>
 #include <string.h>
 #include <Arduino.h>
@@ -29,24 +31,83 @@
 //#pragma GCC optimize ("tree-switch-conversion")
 //#pragma GCC optimize ("no-stack-check")
 
-#define ROTR(x, n) ((x >> n) | (x << ((sizeof(x) << 3) - n)))
-
-#ifndef PUT_UINT32_BE
-#define PUT_UINT32_BE(n, data, offset)                                                                                 \
-    {                                                                                                                  \
-        u.num = n;                                                                                                     \
-        p = (data) + (offset);                                                                                         \
-        *p = u.b[3];                                                                                                   \
-        *(p + 1) = u.b[2];                                                                                             \
-        *(p + 2) = u.b[1];                                                                                             \
-        *(p + 3) = u.b[0];                                                                                             \
-    }
+#ifndef __has_builtin
+#define __has_builtin(x) 0
 #endif
 
+#if __has_builtin(__builtin_rotateright32)
+#define ROTR32_INTRIN(x, n) __builtin_rotateright32((x), (n))
+#define ROTL32_INTRIN(x, n) __builtin_rotateleft32((x), (n))
+#elif __has_builtin(__builtin_ror)
+#define ROTR32_INTRIN(x, n) __builtin_ror((x), (n))
+#define ROTL32_INTRIN(x, n) __builtin_rol((x), (n))
+#elif defined(__GNUC__) && !defined(__clang__) && (__GNUC__ >= 11)
+#define ROTR32_INTRIN(x, n) __builtin_rotateright32((x), (n))
+#define ROTL32_INTRIN(x, n) __builtin_rotateleft32((x), (n))
+#endif
+
+#ifndef ROTR32_INTRIN
+#define ROTR32_INTRIN(x, n) (((x) >> (n)) | ((x) << (32U - (n))))
+#define ROTL32_INTRIN(x, n) (((x) << (n)) | ((x) >> (32U - (n))))
+#endif
+
+static inline __attribute__((always_inline)) uint32_t rotr32(uint32_t value, unsigned int shift)
+{
+    return ROTR32_INTRIN(value, shift);
+}
+
+static inline __attribute__((always_inline)) uint32_t bswap32(uint32_t value)
+{
+#if defined(__clang__)
+#  if __has_builtin(__builtin_bswap32)
+    return __builtin_bswap32(value);
+#  else
+    return ((value & 0xFF000000U) >> 24U) | ((value & 0x00FF0000U) >> 8U) | ((value & 0x0000FF00U) << 8U)
+        | ((value & 0x000000FFU) << 24U);
+#  endif
+#elif defined(__GNUC__)
+    return __builtin_bswap32(value);
+#else
+    return ((value & 0xFF000000U) >> 24U) | ((value & 0x00FF0000U) >> 8U) | ((value & 0x0000FF00U) << 8U)
+        | ((value & 0x000000FFU) << 24U);
+#endif
+}
+
+#if !defined(GET_UINT32_BE) || !defined(PUT_UINT32_BE)
+static inline __attribute__((always_inline)) uint32_t load_be32(const uint8_t* data)
+{
+    uint32_t value;
+    if (__builtin_expect(((reinterpret_cast<uintptr_t>(data) & 3U) == 0U), 1))
+    {
+        value = *reinterpret_cast<const uint32_t*>(data);
+    }
+    else
+    {
+        memcpy(&value, data, sizeof(value));
+    }
+    return bswap32(value);
+}
+
+static inline __attribute__((always_inline)) void store_be32(uint8_t* data, uint32_t value)
+{
+    uint32_t swapped = bswap32(value);
+    if (__builtin_expect(((reinterpret_cast<uintptr_t>(data) & 3U) == 0U), 1))
+    {
+        *reinterpret_cast<uint32_t*>(data) = swapped;
+    }
+    else
+    {
+        memcpy(data, &swapped, sizeof(swapped));
+    }
+}
+
 #ifndef GET_UINT32_BE
-#define GET_UINT32_BE(b, i)                                                                                            \
-    (((uint32_t)(b)[(i)] << 24) | ((uint32_t)(b)[(i) + 1] << 16) | ((uint32_t)(b)[(i) + 2] << 8)                       \
-        | ((uint32_t)(b)[(i) + 3]))
+#define GET_UINT32_BE(b, i) (load_be32((b) + (i)))
+#endif
+
+#ifndef PUT_UINT32_BE
+#define PUT_UINT32_BE(n, data, offset) (store_be32((data) + (offset), (n)))
+#endif
 #endif
 
 // Keep K array in DRAM for fast access (no flash cache penalty)
@@ -68,53 +129,101 @@ DRAM_ATTR __attribute__((aligned(16))) static const uint32_t K[64] = {
     };
 
 
-#define SHR(x, n) ((x & 0xFFFFFFFF) >> n)
-
-#define S0(x) (ROTR(x, 7) ^ ROTR(x, 18) ^ SHR(x, 3))
-#define S1(x) (ROTR(x, 17) ^ ROTR(x, 19) ^ SHR(x, 10))
-
-#define S2(x) (ROTR(x, 2) ^ ROTR(x, 13) ^ ROTR(x, 22))
-#define S3(x) (ROTR(x, 6) ^ ROTR(x, 11) ^ ROTR(x, 25))
-
-#define F0(x, y, z) ((x & y) | (z & (x | y)))
-#define F1(x, y, z) (z ^ (x & (y ^ z)))
-
-#define R(t) (W[t] = S1(W[t - 2]) + W[t - 7] + S0(W[t - 15]) + W[t - 16])
-
-#define P(a, b, c, d, e, f, g, h, x, K)                                                                                \
-    {                                                                                                                  \
-        temp1 = h + S3(e) + F1(e, f, g) + K + x;                                                                       \
-        temp2 = S2(a) + F0(a, b, c);                                                                                   \
-        d += temp1;                                                                                                    \
-        h = temp1 + temp2;                                                                                             \
-    }
-
-uint32_t rotlFixed(uint32_t x, uint32_t y)
-    {
-        return (x << y) | (x >> (sizeof(y) * 8 - y));
-    }
-
-uint32_t ByteReverseWord32(uint32_t value){
-    value = ((value & 0xFF00FF00) >> 8) | ((value & 0x00FF00FF) << 8);
-    return rotlFixed(value, 16U);
+static inline __attribute__((always_inline)) uint32_t small_sigma0(uint32_t x)
+{
+    return rotr32(x, 7U) ^ rotr32(x, 18U) ^ (x >> 3U);
 }
 
-void ByteReverseWords(uint32_t* out, const uint32_t* in, uint32_t byteCount)
+static inline __attribute__((always_inline)) uint32_t small_sigma1(uint32_t x)
 {
-    uint32_t count, i;
-    count = byteCount/(uint32_t)sizeof(uint32_t);
-    for (i = 0; i < count; i++)  out[i] = ByteReverseWord32(in[i]);
+    return rotr32(x, 17U) ^ rotr32(x, 19U) ^ (x >> 10U);
+}
+
+static inline __attribute__((always_inline)) uint32_t big_sigma0(uint32_t x)
+{
+    return rotr32(x, 2U) ^ rotr32(x, 13U) ^ rotr32(x, 22U);
+}
+
+static inline __attribute__((always_inline)) uint32_t big_sigma1(uint32_t x)
+{
+    return rotr32(x, 6U) ^ rotr32(x, 11U) ^ rotr32(x, 25U);
+}
+
+static inline __attribute__((always_inline)) uint32_t choose32(uint32_t x, uint32_t y, uint32_t z)
+{
+    return z ^ (x & (y ^ z));
+}
+
+static inline __attribute__((always_inline)) uint32_t majority32(uint32_t x, uint32_t y, uint32_t z)
+{
+    return (x & y) | (z & (x | y));
+}
+
+constexpr uint32_t rotr32_const(uint32_t value, unsigned int shift)
+{
+    return (value >> shift) | (value << (32U - shift));
+}
+
+constexpr uint32_t small_sigma1_const(uint32_t value)
+{
+    return rotr32_const(value, 17U) ^ rotr32_const(value, 19U) ^ (value >> 10U);
+}
+
+static constexpr uint32_t kSigma1Zero = small_sigma1_const(0U);
+static constexpr uint32_t kSigma1_640 = small_sigma1_const(640U);
+
+#define S0(x) small_sigma0((x))
+#define S1(x) small_sigma1((x))
+#define S2(x) big_sigma0((x))
+#define S3(x) big_sigma1((x))
+#define F0(x, y, z) majority32((x), (y), (z))
+#define F1(x, y, z) choose32((x), (y), (z))
+
+static inline __attribute__((always_inline)) uint32_t schedule_value(uint32_t* W, uint32_t t)
+{
+    uint32_t idx = t & 15U;
+    W[idx] = small_sigma1(W[(t - 2U) & 15U]) + W[(t - 7U) & 15U]
+        + small_sigma0(W[(t - 15U) & 15U]) + W[(t - 16U) & 15U];
+    return W[idx];
+}
+
+static inline __attribute__((always_inline)) void round_step(uint32_t& a, uint32_t& b, uint32_t& c, uint32_t& d,
+    uint32_t& e, uint32_t& f, uint32_t& g, uint32_t& h, uint32_t x, uint32_t Kval, uint32_t& temp1, uint32_t& temp2)
+{
+    temp1 = h + S3(e) + F1(e, f, g) + Kval + x;
+    temp2 = S2(a) + F0(a, b, c);
+    d += temp1;
+    h = temp1 + temp2;
+}
+
+#define R(t) schedule_value(W, (uint32_t)(t))
+#define W_VAL(t) (W[((uint32_t)(t)) & 15U])
+#define P(a, b, c, d, e, f, g, h, x, Kval)                                                                             \
+    round_step((a), (b), (c), (d), (e), (f), (g), (h), (x), (Kval), temp1, temp2)
+
+uint32_t ByteReverseWord32(uint32_t value)
+{
+    return bswap32(value);
+}
+
+void ByteReverseWords(uint32_t* __restrict out, const uint32_t* __restrict in, uint32_t byteCount)
+{
+    uint32_t count = byteCount / static_cast<uint32_t>(sizeof(uint32_t));
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        out[i] = bswap32(in[i]);
+    }
 }
 
 
 // Force function to stay in IRAM for zero-wait-state execution
-IRAM_ATTR __attribute__((hot)) void nerd_mids(uint32_t* digest, const uint8_t* dataIn)
+IRAM_ATTR __attribute__((hot)) void nerd_mids(uint32_t* __restrict digest, const uint8_t* __restrict dataIn)
 {
     // SHA256 initial hash values
     uint32_t A[8] = { 0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19 };
 
-    uint32_t temp1, temp2, W[64];
-    uint8_t i;
+    uint32_t temp1, temp2;
+    uint32_t W[16];
 
     W[0] = GET_UINT32_BE(dataIn, 0);
     W[1] = GET_UINT32_BE(dataIn, 4);
@@ -208,38 +317,31 @@ IRAM_ATTR __attribute__((hot)) void nerd_mids(uint32_t* digest, const uint8_t* d
     digest[7] = 0x5BE0CD19 + A[7];
 }
 
-IRAM_ATTR bool nerd_sha256d(nerdSHA256_context* midstate, const uint8_t* dataIn, uint8_t* doubleHash)
+IRAM_ATTR bool nerd_sha256d(nerdSHA256_context* __restrict midstate, const uint8_t* __restrict dataIn, uint8_t* __restrict doubleHash)
 {
     uint32_t temp1, temp2;
-    uint8_t temp3, temp4;
-    uint32_t* buffer32;
-    //*********** Init 1rst SHA ***********
+    uint32_t W[16];
 
-    uint32_t W[64] = {
-#if 0
-        __builtin_bswap32(((const uint32_t*)dataIn)[0]),
-        __builtin_bswap32(((const uint32_t*)dataIn)[1]),
-        __builtin_bswap32(((const uint32_t*)dataIn)[2]),
-        __builtin_bswap32(((const uint32_t*)dataIn)[3]),
-#else
-        GET_UINT32_BE(dataIn, 0),
-        GET_UINT32_BE(dataIn, 4),
-        GET_UINT32_BE(dataIn, 8),
-        GET_UINT32_BE(dataIn, 12),
-#endif
-        0x80000000, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 640}; 
+    //*********** Init 1rst SHA ***********
+    W[0] = GET_UINT32_BE(dataIn, 0);
+    W[1] = GET_UINT32_BE(dataIn, 4);
+    W[2] = GET_UINT32_BE(dataIn, 8);
+    W[3] = GET_UINT32_BE(dataIn, 12);
+    W[4] = 0x80000000U;
+    W[5] = 0U;
+    W[6] = 0U;
+    W[7] = 0U;
+    W[8] = 0U;
+    W[9] = 0U;
+    W[10] = 0U;
+    W[11] = 0U;
+    W[12] = 0U;
+    W[13] = 0U;
+    W[14] = 0U;
+    W[15] = 640U;
 
     uint32_t A[8] = { midstate->digest[0], midstate->digest[1], midstate->digest[2], midstate->digest[3],
         midstate->digest[4], midstate->digest[5], midstate->digest[6], midstate->digest[7] };
-
-    union {
-        uint32_t num;
-        uint8_t b[4];
-    } u;
-    uint8_t* p = NULL;
-
-    uint8_t i;
 
     P(A[0], A[1], A[2], A[3], A[4], A[5], A[6], A[7], W[0], K[0]);
     P(A[7], A[0], A[1], A[2], A[3], A[4], A[5], A[6], W[1], K[1]);
@@ -306,10 +408,10 @@ IRAM_ATTR bool nerd_sha256d(nerdSHA256_context* midstate, const uint8_t* dataIn,
     P(A[2], A[3], A[4], A[5], A[6], A[7], A[0], A[1], R(62), K[62]);
     P(A[1], A[2], A[3], A[4], A[5], A[6], A[7], A[0], R(63), K[63]);
     
-   //*********** end SHA_finish ***********
+    //*********** end SHA_finish ***********
 
     /* Calculate the second hash (double SHA-256) */
- 
+
     W[0] = A[0] + midstate->digest[0];
     W[1] = A[1] + midstate->digest[1];
     W[2] = A[2] + midstate->digest[2];
@@ -318,14 +420,14 @@ IRAM_ATTR bool nerd_sha256d(nerdSHA256_context* midstate, const uint8_t* dataIn,
     W[5] = A[5] + midstate->digest[5];
     W[6] = A[6] + midstate->digest[6];
     W[7] = A[7] + midstate->digest[7];
-    W[8] = 0x80000000;
-    W[9] = 0;
-    W[10] = 0;
-    W[11] = 0;
-    W[12] = 0;
-    W[13] = 0;
-    W[14] = 0;
-    W[15] = 256;
+    W[8] = 0x80000000U;
+    W[9] = 0U;
+    W[10] = 0U;
+    W[11] = 0U;
+    W[12] = 0U;
+    W[13] = 0U;
+    W[14] = 0U;
+    W[15] = 256U;
 
   
     A[0] = 0x6A09E667;
@@ -407,8 +509,6 @@ IRAM_ATTR bool nerd_sha256d(nerdSHA256_context* midstate, const uint8_t* dataIn,
     P(A[2], A[3], A[4], A[5], A[6], A[7], A[0], A[1], R(62), K[62]);
     P(A[1], A[2], A[3], A[4], A[5], A[6], A[7], A[0], R(63), K[63]);
 
-#if 1
-    //Best performance
     PUT_UINT32_BE(0x6A09E667 + A[0], doubleHash, 0);
     PUT_UINT32_BE(0xBB67AE85 + A[1], doubleHash, 4);
     PUT_UINT32_BE(0x3C6EF372 + A[2], doubleHash, 8);
@@ -417,55 +517,19 @@ IRAM_ATTR bool nerd_sha256d(nerdSHA256_context* midstate, const uint8_t* dataIn,
     PUT_UINT32_BE(0x9B05688C + A[5], doubleHash, 20);
     PUT_UINT32_BE(0x1F83D9AB + A[6], doubleHash, 24);
     PUT_UINT32_BE(0x5BE0CD19 + A[7], doubleHash, 28);
-#endif
-
-#if 0
-    temp1 = 0x6A09E667 + A[0]; ((uint32_t*)doubleHash)[0] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-    temp1 = 0xBB67AE85 + A[1]; ((uint32_t*)doubleHash)[1] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-    temp1 = 0x3C6EF372 + A[2]; ((uint32_t*)doubleHash)[2] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-    temp1 = 0xA54FF53A + A[3]; ((uint32_t*)doubleHash)[3] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-    temp1 = 0x510E527F + A[4]; ((uint32_t*)doubleHash)[4] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-    temp1 = 0x9B05688C + A[5]; ((uint32_t*)doubleHash)[5] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-    temp1 = 0x1F83D9AB + A[6]; ((uint32_t*)doubleHash)[6] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-    temp1 = 0x5BE0CD19 + A[7]; ((uint32_t*)doubleHash)[7] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-#endif
-
-#if 0
-    temp1 = 0x6A09E667 + A[0]; ((uint32_t*)doubleHash)[0] = __builtin_bswap32(temp1);
-    temp1 = 0xBB67AE85 + A[1]; ((uint32_t*)doubleHash)[1] = __builtin_bswap32(temp1);
-    temp1 = 0x3C6EF372 + A[2]; ((uint32_t*)doubleHash)[2] = __builtin_bswap32(temp1);
-    temp1 = 0xA54FF53A + A[3]; ((uint32_t*)doubleHash)[3] = __builtin_bswap32(temp1);
-    temp1 = 0x510E527F + A[4]; ((uint32_t*)doubleHash)[4] = __builtin_bswap32(temp1);
-    temp1 = 0x9B05688C + A[5]; ((uint32_t*)doubleHash)[5] = __builtin_bswap32(temp1);
-    temp1 = 0x1F83D9AB + A[6]; ((uint32_t*)doubleHash)[6] = __builtin_bswap32(temp1);
-    temp1 = 0x5BE0CD19 + A[7]; ((uint32_t*)doubleHash)[7] = __builtin_bswap32(temp1);
-#endif
-
-
-#if 0
-    ((uint32_t*)doubleHash)[0] = __builtin_bswap32( (0x6A09E667 + A[0]) );
-    ((uint32_t*)doubleHash)[1] = __builtin_bswap32( (0xBB67AE85 + A[1]) );
-    ((uint32_t*)doubleHash)[2] = __builtin_bswap32( (0x3C6EF372 + A[2]) );
-    ((uint32_t*)doubleHash)[3] = __builtin_bswap32( (0xA54FF53A + A[3]) );
-    ((uint32_t*)doubleHash)[4] = __builtin_bswap32( (0x510E527F + A[4]) );    
-    ((uint32_t*)doubleHash)[5] = __builtin_bswap32( (0x9B05688C + A[5]) );
-    ((uint32_t*)doubleHash)[6] = __builtin_bswap32( (0x1F83D9AB + A[6]) );
-    ((uint32_t*)doubleHash)[7] = __builtin_bswap32( (0x5BE0CD19 + A[7]) );
-#endif
-
     return true;
 }
 
 
-IRAM_ATTR void nerd_sha256_bake(const uint32_t* digest, const uint8_t* dataIn, uint32_t* bake)  //15 words
+IRAM_ATTR void nerd_sha256_bake(const uint32_t* __restrict digest, const uint8_t* __restrict dataIn, uint32_t* __restrict bake)  //15 words
 {
     bake[0] = GET_UINT32_BE(dataIn, 0);
     bake[1] = GET_UINT32_BE(dataIn, 4);
     bake[2] = GET_UINT32_BE(dataIn, 8);
     //w[3] = GET_UINT32_BE(dataIn, 12);
 
-    bake[3] = S1(  0) + 0 + S0(bake[1]) + bake[0];
-    bake[4] = S1(640) + 0 + S0(bake[2]) + bake[1];
+    bake[3] = kSigma1Zero + small_sigma0(bake[1]) + bake[0];
+    bake[4] = kSigma1_640 + small_sigma0(bake[2]) + bake[1];
 
     uint32_t* a = bake + 5;
     a[0] = digest[0];
@@ -490,18 +554,28 @@ IRAM_ATTR void nerd_sha256_bake(const uint32_t* digest, const uint8_t* dataIn, u
 
 
 // Force inline and optimize for speed with aggressive register allocation
-IRAM_ATTR bool nerd_sha256d_baked_nonce(const uint32_t* digest, const uint32_t* bake, uint32_t nonce_be, uint8_t* doubleHash)
+IRAM_ATTR bool nerd_sha256d_baked_nonce(const uint32_t* __restrict digest, const uint32_t* __restrict bake, uint32_t nonce_be, uint8_t* __restrict doubleHash)
 {
     uint32_t temp1, temp2;
     //*********** Init 1rst SHA ***********
 
-    //W0 W1 W2 is same !!
-    uint32_t W[64] = { bake[0], bake[1], bake[2], nonce_be,
-                0x80000000, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 640 };
-    W[16] = bake[3];
-    W[17] = bake[4];
-
+    uint32_t W[16];
+    W[0] = bake[0];
+    W[1] = bake[1];
+    W[2] = bake[2];
+    W[3] = nonce_be;
+    W[4] = 0x80000000U;
+    W[5] = 0U;
+    W[6] = 0U;
+    W[7] = 0U;
+    W[8] = 0U;
+    W[9] = 0U;
+    W[10] = 0U;
+    W[11] = 0U;
+    W[12] = 0U;
+    W[13] = 0U;
+    W[14] = 0U;
+    W[15] = 640U;
     const uint32_t* a = bake + 5;
     uint32_t A[8] = { a[0], a[1], a[2], a[3],
                       a[4], a[5], a[6], a[7] };
@@ -529,8 +603,10 @@ IRAM_ATTR bool nerd_sha256d_baked_nonce(const uint32_t* digest, const uint32_t* 
     P(A[3], A[4], A[5], A[6], A[7], A[0], A[1], A[2], W[13], K[13]);
     P(A[2], A[3], A[4], A[5], A[6], A[7], A[0], A[1], W[14], K[14]);
     P(A[1], A[2], A[3], A[4], A[5], A[6], A[7], A[0], W[15], K[15]);
-    P(A[0], A[1], A[2], A[3], A[4], A[5], A[6], A[7], W[16], K[16]);
-    P(A[7], A[0], A[1], A[2], A[3], A[4], A[5], A[6], W[17], K[17]);
+    W_VAL(16U) = bake[3];
+    P(A[0], A[1], A[2], A[3], A[4], A[5], A[6], A[7], W_VAL(16U), K[16]);
+    W_VAL(17U) = bake[4];
+    P(A[7], A[0], A[1], A[2], A[3], A[4], A[5], A[6], W_VAL(17U), K[17]);
     P(A[6], A[7], A[0], A[1], A[2], A[3], A[4], A[5], R(18), K[18]);
     P(A[5], A[6], A[7], A[0], A[1], A[2], A[3], A[4], R(19), K[19]);
     P(A[4], A[5], A[6], A[7], A[0], A[1], A[2], A[3], R(20), K[20]);
@@ -590,7 +666,7 @@ IRAM_ATTR bool nerd_sha256d_baked_nonce(const uint32_t* digest, const uint32_t* 
     W[5] = A[5] + digest[5];
     W[6] = A[6] + digest[6];
     W[7] = A[7] + digest[7];
-    W[8] = 0x80000000;
+    W[8] = 0x80000000U;
     W[9] = 0;
     W[10] = 0;
     W[11] = 0;
@@ -725,16 +801,6 @@ IRAM_ATTR bool nerd_sha256d_baked_nonce(const uint32_t* digest, const uint32_t* 
     P(A[2], A[3], A[4], A[5], A[6], A[7], A[0], A[1], R(62), K[62]);
     P(A[1], A[2], A[3], A[4], A[5], A[6], A[7], A[0], R(63), K[63]);
 
-#if 1
-    temp1 = 0x6A09E667 + A[0]; ((uint32_t*)doubleHash)[0] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-    temp1 = 0xBB67AE85 + A[1]; ((uint32_t*)doubleHash)[1] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-    temp1 = 0x3C6EF372 + A[2]; ((uint32_t*)doubleHash)[2] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-    temp1 = 0xA54FF53A + A[3]; ((uint32_t*)doubleHash)[3] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-    temp1 = 0x510E527F + A[4]; ((uint32_t*)doubleHash)[4] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-    temp1 = 0x9B05688C + A[5]; ((uint32_t*)doubleHash)[5] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-    temp1 = 0x1F83D9AB + A[6]; ((uint32_t*)doubleHash)[6] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-    temp1 = 0x5BE0CD19 + A[7]; ((uint32_t*)doubleHash)[7] = (temp1 << 24) | ((temp1 << 8) & 0x00FF0000) | ((temp1 >> 8) & 0x0000FF00) | (temp1 >> 24);
-#else
     PUT_UINT32_BE(0x6A09E667 + A[0], doubleHash, 0);
     PUT_UINT32_BE(0xBB67AE85 + A[1], doubleHash, 4);
     PUT_UINT32_BE(0x3C6EF372 + A[2], doubleHash, 8);
@@ -743,11 +809,10 @@ IRAM_ATTR bool nerd_sha256d_baked_nonce(const uint32_t* digest, const uint32_t* 
     PUT_UINT32_BE(0x9B05688C + A[5], doubleHash, 20);
     PUT_UINT32_BE(0x1F83D9AB + A[6], doubleHash, 24);
     PUT_UINT32_BE(0x5BE0CD19 + A[7], doubleHash, 28);
-#endif
     return true;
 }
 
-IRAM_ATTR bool nerd_sha256d_baked(const uint32_t* digest, const uint8_t* dataIn, const uint32_t* bake, uint8_t* doubleHash)
+IRAM_ATTR bool nerd_sha256d_baked(const uint32_t* __restrict digest, const uint8_t* __restrict dataIn, const uint32_t* __restrict bake, uint8_t* __restrict doubleHash)
 {
     return nerd_sha256d_baked_nonce(digest, bake, GET_UINT32_BE(dataIn, 12), doubleHash);
 }
