@@ -677,6 +677,12 @@ void runStratumWorker(void *name)
     // Batch atomic hash updates: accumulate locally, update once at end
     uint32_t total_hashes_processed = 0;
 
+    // Convert current pool difficulty to target for precise comparison (avoids float precision errors)
+    uint8_t pool_target[32];
+    if (!difficulty_to_target(currentPoolDifficulty, pool_target)) {
+        memset(pool_target, 0xFF, 32);  // Fallback to max target if conversion fails
+    }
+
     while (!job_result_list.empty())
     {
       std::shared_ptr<JobResult> res = job_result_list.front();
@@ -687,18 +693,22 @@ void runStratumWorker(void *name)
       {
         total_hashes_processed += (res->nonce_count - res->nonces_skipped);
       }
-      if (res->difficulty > DEFAULT_DIFFICULTY && job_pool == res->id && res->nonce != 0xFFFFFFFF)
+      if (checkValid(res->hash, pool_target) && job_pool == res->id && res->nonce != 0xFFFFFFFF)
       {
         if (!client.connected())
           break;
         unsigned long sumbit_id = 0;
         tx_mining_submit(client, mWorker.wName, res->job_id, res->extranonce2, res->ntime, res->nonce, sumbit_id);
+
+        #ifdef DEBUG_MINING
         DEBUG_SERIAL_PRINT("   - Current diff share: "); DEBUG_SERIAL_PRINTLN(res->difficulty,12);
         DEBUG_SERIAL_PRINT("   - Current pool diff : "); DEBUG_SERIAL_PRINTLN(currentPoolDifficulty,12);
         DEBUG_SERIAL_PRINT("   - TX SHARE: ");
         for (size_t i = 0; i < 32; i++)
             DEBUG_SERIAL_PRINTF("%02x", res->hash[i]);
         DEBUG_SERIAL_PRINTLN("");
+        #endif
+        
         mLastTXtoPool = millis();
 
         std::shared_ptr<Submission> submission = std::make_shared<Submission>();

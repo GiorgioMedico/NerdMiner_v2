@@ -336,7 +336,7 @@ bool checkValid(const uint8_t* hash, const uint8_t* target)
     }
   }
 
-  #ifdef DEBUG_MINING
+  #ifdef DEBUG_MINING_ALL
   DEBUG_SERIAL_PRINT("\tvalid : ");
   for (size_t i = 0; i < 32; i++)
       DEBUG_SERIAL_PRINTF("%02x ", hash[i]);

@@ -94,20 +94,20 @@ void setup()
     // button1.attachDoubleClick(alternateScreenRotation);
     // button1.attachLongPressStart(reset_configuration);
     // button1.attachMultiClick(alternateScreenState);
-    button1.setPressMs(1*SECOND_MS);
+    button1.setPressMs(0.5*SECOND_MS);
     button1.attachClick(alternateScreenState);
     button1.attachLongPressStart(reset_configuration);
   #endif
 
   #if defined(PIN_BUTTON_1) && defined(PIN_BUTTON_2) //Button 1 of two button device
-    button1.setPressMs(1*SECOND_MS);
+    button1.setPressMs(0.5*SECOND_MS);
     // button1.attachClick(alternateScreenState);
     button1.attachClick(alternateScreenState);
     button1.attachLongPressStart(reset_configuration);
   #endif
 
   #if defined(PIN_BUTTON_2) //Button 2 of two button device
-    button2.setPressMs(1*SECOND_MS);
+    button2.setPressMs(0.5*SECOND_MS);
     button2.attachClick(alternateScreenState);
     button2.attachLongPressStart(reset_configuration);
   #endif
