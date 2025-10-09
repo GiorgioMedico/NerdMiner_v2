@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "logging.h"
+#include <cmath>
+#include "mbedtls/bignum.h"
 
 #if __has_include("esp_rom_crc.h")
 #include "esp_rom_crc.h"
@@ -143,6 +145,150 @@ double diff_from_target(void *target)
 	if (dcut64 == 0.0)
 		dcut64 = 1;
 	return d64 / dcut64;
+}
+
+bool difficulty_to_target(double difficulty, uint8_t* target_le)
+{
+    if (!target_le)
+        return false;
+
+    if (difficulty <= 0.0 || !std::isfinite(difficulty))
+    {
+        memset(target_le, 0xFF, 32);
+        return true;
+    }
+
+    // Static initialization of diff1 target (initialized once)
+    static const char* DIFF1_TARGET_HEX = "00000000ffff0000000000000000000000000000000000000000000000000000";
+    static mbedtls_mpi diff1;
+    static bool diff1_initialized = false;
+
+    if (!diff1_initialized)
+    {
+        mbedtls_mpi_init(&diff1);
+        int ret = mbedtls_mpi_read_string(&diff1, 16, DIFF1_TARGET_HEX);
+        if (ret != 0)
+            return false;
+        diff1_initialized = true;
+    }
+
+    // Cache last result (difficulty rarely changes)
+    static double last_difficulty = -1.0;
+    static uint8_t cached_target[32];
+
+    if (difficulty == last_difficulty)
+    {
+        memcpy(target_le, cached_target, 32);
+        return true;
+    }
+
+    mbedtls_mpi scaled_target;
+    mbedtls_mpi mantissa_mpi;
+    mbedtls_mpi quotient;
+    mbedtls_mpi_init(&scaled_target);
+    mbedtls_mpi_init(&mantissa_mpi);
+    mbedtls_mpi_init(&quotient);
+
+    bool success = false;
+
+    do
+    {
+        int ret;
+
+        int exponent = 0;
+        double mantissa = frexp(difficulty, &exponent);
+        if (mantissa == 0.0)
+        {
+            memset(target_le, 0xFF, 32);
+            success = true;
+            break;
+        }
+
+        double mantissa_scaled = ldexp(mantissa, 53);
+        uint64_t mantissa_int = static_cast<uint64_t>(mantissa_scaled);
+        if (mantissa_int == 0)
+            mantissa_int = 1;
+        if (mantissa_int == (1ULL << 53))
+        {
+            mantissa_int >>= 1;
+            exponent += 1;
+        }
+
+        uint8_t mantissa_buf[8] = {0};
+        uint64_t mantissa_tmp = mantissa_int;
+        for (int i = 7; i >= 0; --i)
+        {
+            mantissa_buf[i] = static_cast<uint8_t>(mantissa_tmp & 0xFF);
+            mantissa_tmp >>= 8;
+        }
+
+        size_t offset = 0;
+        while (offset < sizeof(mantissa_buf) - 1 && mantissa_buf[offset] == 0)
+            ++offset;
+        size_t mantissa_len = sizeof(mantissa_buf) - offset;
+        if (mantissa_len == 0)
+            mantissa_len = 1;
+
+        ret = mbedtls_mpi_read_binary(&mantissa_mpi, mantissa_buf + offset, mantissa_len);
+        if (ret != 0)
+            break;
+
+        ret = mbedtls_mpi_copy(&scaled_target, &diff1);
+        if (ret != 0)
+            break;
+
+        int shift = exponent - 53;
+        if (shift > 0)
+        {
+            ret = mbedtls_mpi_shift_r(&scaled_target, static_cast<size_t>(shift));
+            if (ret != 0)
+                break;
+        }
+        else if (shift < 0)
+        {
+            ret = mbedtls_mpi_shift_l(&scaled_target, static_cast<size_t>(-shift));
+            if (ret != 0)
+                break;
+        }
+
+        ret = mbedtls_mpi_div_mpi(&quotient, nullptr, &scaled_target, &mantissa_mpi);
+        if (ret != 0)
+            break;
+
+        size_t required = mbedtls_mpi_size(&quotient);
+        if (required > 32)
+        {
+            memset(target_le, 0xFF, 32);
+        }
+        else
+        {
+            uint8_t target_be[32] = {0};
+            if (required > 0)
+            {
+                ret = mbedtls_mpi_write_binary(&quotient, target_be + (32 - required), required);
+                if (ret != 0)
+                    break;
+            }
+            for (size_t i = 0; i < 32; ++i)
+                target_le[i] = target_be[31 - i];
+        }
+
+        success = true;
+    } while (false);
+
+    // Don't free diff1 - it's static and reused
+    mbedtls_mpi_free(&scaled_target);
+    mbedtls_mpi_free(&mantissa_mpi);
+    mbedtls_mpi_free(&quotient);
+
+    // Update cache on success
+    if (success)
+    {
+        last_difficulty = difficulty;
+        memcpy(cached_target, target_le, 32);
+    }
+
+    return success;
 }
 
 bool isSha256Valid(const void* sha256)

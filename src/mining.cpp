@@ -205,11 +205,35 @@ struct JobResult
   uint32_t nonce_count;        // Successfully processed nonces
   uint32_t nonces_skipped;     // Nonces skipped due to SHA hardware timeout
   double difficulty;
+  uint8_t best_hash[32];
   uint8_t hash[32];
   char job_id[64];       // Pool's job ID
   char ntime[9];         // Job's ntime
   char extranonce2[17];  // Extranonce2
 };
+
+static inline bool hash_is_better(const uint8_t* candidate, const uint8_t* reference)
+{
+  if (!candidate || !reference)
+    return false;
+
+  for (int i = 31; i >= 0; --i)
+  {
+    if (candidate[i] < reference[i])
+      return true;
+    if (candidate[i] > reference[i])
+      return false;
+  }
+  return false;
+}
+
+static inline void initialize_best_hash(JobResult& result)
+{
+  if (!difficulty_to_target(result.difficulty, result.best_hash))
+  {
+    memset(result.best_hash, 0xFF, sizeof(result.best_hash));
+  }
+}
 
 static std::mutex s_job_mutex;
 std::list<std::shared_ptr<JobRequest>> s_job_request_list_sw;
@@ -746,6 +770,7 @@ void minerWorkerSw(void * task_id)
       result->id = job->id;
       result->nonce_count = job->nonce_count;
       result->nonces_skipped = 0;  // SW workers don't skip nonces (no SHA hardware)
+      initialize_best_hash(*result);
       strncpy(result->job_id, job->job_id, sizeof(result->job_id) - 1);
       strncpy(result->ntime, job->ntime, sizeof(result->ntime) - 1);
       strncpy(result->extranonce2, job->extranonce2, sizeof(result->extranonce2) - 1);
@@ -755,13 +780,13 @@ void minerWorkerSw(void * task_id)
         uint32_t nonce = job->nonce_start + n;
         if (nerd_sha256d_baked_nonce(job->midstate, job->bake, __builtin_bswap32(nonce), hash))
         {
-          double diff_hash = diff_from_target(hash);
-          // DEBUG_SERIAL_PRINTF("[DIFFICULTY] Diff: %.8f | Nonce: %u \n", diff_hash, nonce);
-          if (diff_hash > result->difficulty)
+          if (isSha256Valid(hash) && hash_is_better(hash, result->best_hash))
           {
+            double diff_hash = diff_from_target(hash);
             result->difficulty = diff_hash;
             result->nonce = nonce;
             memcpy(result->hash, hash, 32);
+            memcpy(result->best_hash, hash, 32);
           }
         }
 
@@ -965,6 +990,7 @@ void minerWorkerHw(void * task_id)
       result->nonce_count = job->nonce_count;
       result->nonces_skipped = 0;  // Track SHA hardware timeouts
       result->difficulty = job->difficulty;
+      initialize_best_hash(*result);
       strncpy(result->job_id, job->job_id, sizeof(result->job_id) - 1);
       strncpy(result->ntime, job->ntime, sizeof(result->ntime) - 1);
       strncpy(result->extranonce2, job->extranonce2, sizeof(result->extranonce2) - 1);
@@ -1025,15 +1051,13 @@ void minerWorkerHw(void * task_id)
           }
 #endif
           //~5 per second
-          double diff_hash = diff_from_target(hash);
-          if (diff_hash > result->difficulty)
+          if (isSha256Valid(hash) && hash_is_better(hash, result->best_hash))
           {
-            if (isSha256Valid(hash))
-            {
-              result->difficulty = diff_hash;
-              result->nonce = n;
-              memcpy(result->hash, hash, sizeof(hash));
-            }
+            double diff_hash = diff_from_target(hash);
+            result->difficulty = diff_hash;
+            result->nonce = n;
+            memcpy(result->hash, hash, sizeof(hash));
+            memcpy(result->best_hash, hash, sizeof(hash));
           }
         }
         if (
@@ -1224,6 +1248,7 @@ void minerWorkerHw(void * task_id)
       result->nonce_count = job->nonce_count;
       result->nonces_skipped = 0;  // Track SHA hardware timeouts
       result->difficulty = job->difficulty;
+      initialize_best_hash(*result);
       strncpy(result->job_id, job->job_id, sizeof(result->job_id) - 1);
       strncpy(result->ntime, job->ntime, sizeof(result->ntime) - 1);
       strncpy(result->extranonce2, job->extranonce2, sizeof(result->extranonce2) - 1);
@@ -1286,15 +1311,13 @@ void minerWorkerHw(void * task_id)
         if (nerd_sha_ll_read_digest_swap_if(hash))
         {
           //~5 per second
-          double diff_hash = diff_from_target(hash);
-          if (diff_hash > result->difficulty)
+          if (isSha256Valid(hash) && hash_is_better(hash, result->best_hash))
           {
-            if (isSha256Valid(hash))
-            {
-              result->difficulty = diff_hash;
-              result->nonce = job->nonce_start+n;
-              memcpy(result->hash, hash, sizeof(hash));
-            }
+            double diff_hash = diff_from_target(hash);
+            result->difficulty = diff_hash;
+            result->nonce = job->nonce_start+n;
+            memcpy(result->hash, hash, sizeof(hash));
+            memcpy(result->best_hash, hash, sizeof(hash));
           }
         }
         if (

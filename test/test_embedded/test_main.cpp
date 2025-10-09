@@ -1,5 +1,6 @@
 #include <unity.h>
 #include <Arduino.h>
+#include <limits>
 
 // Include the actual source files for testing
 #include "../../src/utils.cpp"
@@ -138,6 +139,65 @@ void test_sha256_validation_basic() {
     TEST_ASSERT_FALSE(isSha256Valid(zero_hash));
 
     Serial.println("✓ SHA256 validation tests passed");
+}
+
+static void assert_difficulty_target_hex(double difficulty, const char* expected_hex_be) {
+    uint8_t target_le[32] = {0};
+    TEST_ASSERT_TRUE(difficulty_to_target(difficulty, target_le));
+
+    uint8_t expected_be[32] = {0};
+    int converted = to_byte_array(expected_hex_be, sizeof(expected_be), expected_be);
+    TEST_ASSERT_EQUAL_INT(32, converted);
+
+    uint8_t observed_be[32];
+    for (size_t i = 0; i < sizeof(observed_be); ++i) {
+        observed_be[i] = target_le[31 - i];
+    }
+
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected_be, observed_be, sizeof(expected_be));
+}
+
+void test_difficulty_to_target_nominal() {
+    Serial.println("✓ difficulty_to_target nominal cases");
+
+    assert_difficulty_target_hex(
+        1.0,
+        "00000000ffff0000000000000000000000000000000000000000000000000000"
+    );
+
+    assert_difficulty_target_hex(
+        0.00015,
+        "00001a0a90a0000000a462b0f20000040daefcf7a0001996609cdb2200a18541"
+    );
+
+    assert_difficulty_target_hex(
+        0.003052181476,
+        "00000147a127fe11d175a1492d4fe4cef8be55a6363647391e581a97eb507511"
+    );
+
+    assert_difficulty_target_hex(
+        100000.0,
+        "000000000000a7c504816f0068db8bac710cb295e9e1b089a027525460aa64c2"
+    );
+}
+
+static void assert_target_all_ff(double difficulty) {
+    uint8_t target_le[32] = {0};
+    TEST_ASSERT_TRUE(difficulty_to_target(difficulty, target_le));
+    for (size_t i = 0; i < sizeof(target_le); ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0xFF, target_le[i]);
+    }
+}
+
+void test_difficulty_to_target_edge_cases() {
+    Serial.println("✓ difficulty_to_target edge cases");
+
+    assert_target_all_ff(0.0);
+    assert_target_all_ff(-1.0);
+    assert_target_all_ff(std::numeric_limits<double>::quiet_NaN());
+    assert_target_all_ff(std::numeric_limits<double>::infinity());
+    assert_target_all_ff(-std::numeric_limits<double>::infinity());
+    assert_target_all_ff(1e-10);
 }
 
 // =============================================================================
@@ -1689,6 +1749,8 @@ void setup() {
     RUN_TEST(test_crc32_functions);
     RUN_TEST(test_suffix_string);
     RUN_TEST(test_sha256_validation_basic);
+    RUN_TEST(test_difficulty_to_target_nominal);
+    RUN_TEST(test_difficulty_to_target_edge_cases);
 
     // Run mode-specific tests
     #ifdef SHA256_TEST

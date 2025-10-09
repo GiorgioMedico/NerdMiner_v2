@@ -25,6 +25,7 @@ void reverse_bytes(uint8_t* data, size_t len);
 double le256todouble(const void *target);
 double diff_from_target(void *target);
 bool isSha256Valid(const void* sha256);
+bool difficulty_to_target(double difficulty, uint8_t* target_le);
 
 void getRandomExtranonce2(int extranonce2_size, char *extranonce2);
 void getNextExtranonce2(int extranonce2_size, char *extranonce2);
