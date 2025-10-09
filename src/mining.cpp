@@ -24,8 +24,8 @@
 //10 Jobs per second
 // #define NONCE_PER_JOB_SW 4096
 // #define NONCE_PER_JOB_HW 16*1024
-#define NONCE_PER_JOB_SW 16384   // Doubled for better throughput
-#define NONCE_PER_JOB_HW 64*1024  // Doubled for better throughput
+#define NONCE_PER_JOB_SW 2*16384
+#define NONCE_PER_JOB_HW 4*64*1024
 
 //#define SHA256_VALIDATE
 #define RANDOM_NONCE
@@ -601,7 +601,7 @@ void runStratumWorker(void *name)
 
     std::list<std::shared_ptr<JobResult>> job_result_list;
 
-    vTaskDelay(100 / portTICK_PERIOD_MS);
+    vTaskDelay(200 / portTICK_PERIOD_MS);
 
 
     if (job_pool != 0xFFFFFFFF)

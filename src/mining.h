@@ -21,7 +21,7 @@
 #define JOB_CANCELLATION_CHECK_MASK 0xFF
 
 // Job queue sizes (increased for better miner throughput)
-#define JOB_QUEUE_SIZE          8
+#define JOB_QUEUE_SIZE          10
 #define RESULT_LIST_SIZE        16
 #define SUBMISSION_MAP_MAX       32
 
@@ -38,7 +38,7 @@
 // Nonce start values for different mining modes
 #define NONCE_START_RANDOM     0xDA54E700  // Random start nonce (non-zero for compatibility)
 
-#define JOB_REFILL_BATCH           4   // Incremental refill: jobs created per batch
+#define JOB_REFILL_BATCH           6   // Incremental refill: jobs created per batch
 #define JOB_TIMEOUT_MS             (10*60*1000)  // 10 minutes without new job triggers reconnect
 
 
