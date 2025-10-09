@@ -52,9 +52,6 @@ void minerWorkerHw(void * task_id);
 
 String printLocalTime(void);
 
-void resetStat();
-void closeStat();
-
 struct miner_data {
   uint8_t bytearray_target[32];
   uint8_t bytearray_pooltarget[32];

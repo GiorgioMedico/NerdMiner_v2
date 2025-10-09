@@ -2,8 +2,6 @@
 #include <ArduinoJson.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
-#include <nvs_flash.h>
-#include <nvs.h>
 //#include "ShaTests/nerdSHA256.h"
 #include "ShaTests/nerdSHA256plus.h"
 #include "stratum.h"
@@ -42,8 +40,6 @@
 
 #endif
 
-nvs_handle_t stat_handle;
-
 std::atomic<uint32_t> templates{0};
 std::atomic<uint32_t> hashes{0};
 std::atomic<uint32_t> Mhashes{0};
@@ -75,10 +71,6 @@ mining_job mJob;
 monitor_data mMonitor;
 static std::atomic<bool> isMinerSuscribed{false};
 uint32_t mLastTXtoPool = millis();
-
-int saveIntervals[7] = {5 * 60, 15 * 60, 30 * 60, 1 * 3600, 3 * 3600, 6 * 3600, 12 * 3600};
-int saveIntervalsSize = sizeof(saveIntervals)/sizeof(saveIntervals[0]);
-int currentIntervalIndex = 0;
 
 bool checkPoolConnection(void)
 {
@@ -1412,149 +1404,10 @@ void minerWorkerHw(void * task_id)
 #define DELAY 2000  // Reduced from 1000ms to 2000ms (1Hz -> 0.5Hz) to save CPU cycles for mining
 #define REDRAW_EVERY 10
 
-void restoreStat() 
-{
-  if(!Settings.saveStats) return;
-  esp_err_t ret = nvs_flash_init();
-  if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-    DEBUG_SERIAL_PRINTF("[MONITOR] NVS partition is full or has invalid version, erasing...\n");
-    nvs_flash_init();
-  }
-
-  ret = nvs_open("state", NVS_READWRITE, &stat_handle);
-
-  // Initialize all variables to prevent using garbage data if nvs_get_* fails
-  float local_best_diff = 0.0f;
-  uint32_t nv_Mhashes = 0, nv_templates = 0;
-  uint64_t nv_upTime = 0;
-  uint32_t nv_shares = 0, nv_valids = 0;
-
-  // Read all values and check for errors
-  size_t required_size = sizeof(float);
-  esp_err_t err_diff = nvs_get_blob(stat_handle, "best_diff", &local_best_diff, &required_size);
-  esp_err_t err_mhashes = nvs_get_u32(stat_handle, "Mhashes", &nv_Mhashes);
-  esp_err_t err_shares = nvs_get_u32(stat_handle, "shares", &nv_shares);
-  esp_err_t err_valids = nvs_get_u32(stat_handle, "valids", &nv_valids);
-  esp_err_t err_templates = nvs_get_u32(stat_handle, "templates", &nv_templates);
-  esp_err_t err_uptime = nvs_get_u64(stat_handle, "upTime", &nv_upTime);
-
-  // Only validate CRC if all reads succeeded
-  bool all_reads_ok = (err_diff == ESP_OK && err_mhashes == ESP_OK &&
-                       err_shares == ESP_OK && err_valids == ESP_OK &&
-                       err_templates == ESP_OK && err_uptime == ESP_OK);
-
-  uint32_t crc = crc32_reset();
-  crc = crc32_add(crc, &local_best_diff, sizeof(local_best_diff));
-  crc = crc32_add(crc, &nv_Mhashes, sizeof(nv_Mhashes));
-  crc = crc32_add(crc, &nv_shares, sizeof(nv_shares));
-  crc = crc32_add(crc, &nv_valids, sizeof(nv_valids));
-  crc = crc32_add(crc, &nv_templates, sizeof(nv_templates));
-  crc = crc32_add(crc, &nv_upTime, sizeof(nv_upTime));
-  crc = crc32_finish(crc);
-
-  uint32_t nv_crc = 0;
-  esp_err_t crc_err = nvs_get_u32(stat_handle, "crc32", &nv_crc);
-  if (!all_reads_ok || crc_err != ESP_OK || nv_crc != crc)
-  {
-    DEBUG_SERIAL_PRINTF("[MONITOR] CRC validation failed (err=%d), resetting stats\n", crc_err);
-    best_diff.store(0.0f, std::memory_order_relaxed);
-    Mhashes.store(0, std::memory_order_relaxed);
-    shares.store(0, std::memory_order_relaxed);
-    valids.store(0, std::memory_order_relaxed);
-    templates.store(0, std::memory_order_relaxed);
-    upTime.store(0, std::memory_order_relaxed);
-  }
-  else
-  {
-    // CRC valid, apply loaded values to atomics and best_diff
-    best_diff.store(local_best_diff, std::memory_order_relaxed);
-    Mhashes.store(nv_Mhashes, std::memory_order_relaxed);
-    shares.store(nv_shares, std::memory_order_relaxed);
-    valids.store(nv_valids, std::memory_order_relaxed);
-    templates.store(nv_templates, std::memory_order_relaxed);
-    upTime.store(nv_upTime, std::memory_order_relaxed);
-  }
-}
-
-void saveStat() 
-{
-  if(!Settings.saveStats) return;
-  DEBUG_SERIAL_PRINTF("[MONITOR] Saving stats\n");
-
-  float local_best_diff = best_diff.load(std::memory_order_relaxed);
-
-  // Load atomic values for saving
-  uint32_t nv_Mhashes = Mhashes.load(std::memory_order_relaxed);
-  uint32_t nv_shares = shares.load(std::memory_order_relaxed);
-  uint32_t nv_valids = valids.load(std::memory_order_relaxed);
-  uint32_t nv_templates = templates.load(std::memory_order_relaxed);
-  uint64_t nv_upTime = upTime.load(std::memory_order_relaxed);
-
-  esp_err_t err;
-  err = nvs_set_blob(stat_handle, "best_diff", &local_best_diff, sizeof(local_best_diff));
-  if (err != ESP_OK) DEBUG_SERIAL_PRINTF("[MONITOR] Failed to save best_diff: %d\n", err);
-
-  err = nvs_set_u32(stat_handle, "Mhashes", nv_Mhashes);
-  if (err != ESP_OK) DEBUG_SERIAL_PRINTF("[MONITOR] Failed to save Mhashes: %d\n", err);
-
-  err = nvs_set_u32(stat_handle, "shares", nv_shares);
-  if (err != ESP_OK) DEBUG_SERIAL_PRINTF("[MONITOR] Failed to save shares: %d\n", err);
-
-  err = nvs_set_u32(stat_handle, "valids", nv_valids);
-  if (err != ESP_OK) DEBUG_SERIAL_PRINTF("[MONITOR] Failed to save valids: %d\n", err);
-
-  err = nvs_set_u32(stat_handle, "templates", nv_templates);
-  if (err != ESP_OK) DEBUG_SERIAL_PRINTF("[MONITOR] Failed to save templates: %d\n", err);
-
-  err = nvs_set_u64(stat_handle, "upTime", nv_upTime);
-  if (err != ESP_OK) DEBUG_SERIAL_PRINTF("[MONITOR] Failed to save upTime: %d\n", err);
-
-  uint32_t crc = crc32_reset();
-  crc = crc32_add(crc, &local_best_diff, sizeof(local_best_diff));
-  crc = crc32_add(crc, &nv_Mhashes, sizeof(nv_Mhashes));
-  crc = crc32_add(crc, &nv_shares, sizeof(nv_shares));
-  crc = crc32_add(crc, &nv_valids, sizeof(nv_valids));
-  crc = crc32_add(crc, &nv_templates, sizeof(nv_templates));
-  crc = crc32_add(crc, &nv_upTime, sizeof(nv_upTime));
-  crc = crc32_finish(crc);
-
-  err = nvs_set_u32(stat_handle, "crc32", crc);
-  if (err != ESP_OK) DEBUG_SERIAL_PRINTF("[MONITOR] Failed to save crc32: %d\n", err);
-
-  err = nvs_commit(stat_handle);
-  if (err != ESP_OK) DEBUG_SERIAL_PRINTF("[MONITOR] Failed to commit NVS: %d\n", err);
-}
-
-void closeStat() 
-{
-    if (stat_handle != 0) {
-        nvs_commit(stat_handle);
-        nvs_close(stat_handle);
-        stat_handle = 0;
-        DEBUG_SERIAL_PRINTF("[MONITOR] NVS handle closed\n");
-    }
-}
-
-void resetStat() 
-{
-    DEBUG_SERIAL_PRINTF("[MONITOR] Resetting NVS stats\n");
-    templates.store(0, std::memory_order_relaxed);
-    hashes.store(0, std::memory_order_relaxed);
-    Mhashes.store(0, std::memory_order_relaxed);
-    totalKHashes.store(0, std::memory_order_relaxed);
-    elapsedKHs.store(0.0f, std::memory_order_relaxed);
-    upTime.store(0, std::memory_order_relaxed);
-    shares.store(0, std::memory_order_relaxed);
-    valids.store(0, std::memory_order_relaxed);
-    best_diff.store(0.0f, std::memory_order_relaxed);
-    saveStat();
-}
-
 void runMonitor(void *name)
 {
 
   DEBUG_SERIAL_PRINTLN("[MONITOR] started");
-  restoreStat();
 
   uint32_t mLastCheck = 0;
 
@@ -1562,7 +1415,6 @@ void runMonitor(void *name)
 
   unsigned long frame = 0;
 
-  uint32_t seconds_elapsed = 0;
   uint64_t lastTotalHashes =
       (static_cast<uint64_t>(Mhashes.load(std::memory_order_relaxed)) * 1000000ULL) +
       static_cast<uint64_t>(hashes.load(std::memory_order_relaxed));
@@ -1621,15 +1473,6 @@ void runMonitor(void *name)
       DEBUG_SERIAL_PRINTF("### [Total Heap / Free heap / Min free heap]: %d / %d / %d \n", ESP.getHeapSize(), ESP.getFreeHeap(), ESP.getMinFreeHeap());
       DEBUG_SERIAL_PRINTF("### Max stack usage: %d\n", uxTaskGetStackHighWaterMark(NULL));
       #endif
-
-      seconds_elapsed++;
-
-      if(seconds_elapsed % (saveIntervals[currentIntervalIndex]) == 0){
-        saveStat();
-        seconds_elapsed = 0;
-        if(currentIntervalIndex < saveIntervalsSize - 1)
-          currentIntervalIndex++;
-      }
     }
     // animateCurrentScreen has empty implementations in all current drivers
     // animateCurrentScreen(frame);
