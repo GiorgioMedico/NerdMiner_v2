@@ -791,11 +791,13 @@ void minerWorkerSw(void * task_id)
             memcpy(result->best_hash, hash, 32);
           }
         }
-
-        if ( (uint16_t)(n & 0xFF) == 0 && s_working_current_job_id.load(std::memory_order_acquire) != job_in_work)
+        if ((uint16_t)(n & 0xFF) == 0)
         {
-          result->nonce_count = n+1;
-          break;
+          if (s_working_current_job_id.load(std::memory_order_acquire) != job_in_work)
+          {
+            result->nonce_count = n+1;
+            break;
+          }
         }
       }
     } 
@@ -1107,8 +1109,7 @@ __attribute__((hot, optimize("Ofast"))) void minerWorkerHw(void * task_id)
           // Valid candidate found - process it
           if (__builtin_expect(isSha256Valid(hash) && hash_is_better(hash, result->best_hash), 1))
           {
-            double diff_hash = diff_from_target(hash);
-            result->difficulty = diff_hash;
+            result->difficulty = diff_from_target(hash);
             result->nonce = n;
             memcpy(result->hash, hash, sizeof(hash));
             memcpy(result->best_hash, hash, sizeof(hash));
@@ -1313,6 +1314,7 @@ void minerWorkerHw(void * task_id)
       strncpy(result->extranonce2, job->extranonce2, sizeof(result->extranonce2) - 1);
       uint8_t job_in_work = job->id & 0xFF;
       memcpy(sha_buffer, job->sha_buffer, 80);
+      uint8_t current_job_id;
 
       esp_sha_lock_engine(SHA2_256);
       for (uint32_t n = 0; n < job->nonce_count; ++n)
@@ -1372,19 +1374,20 @@ void minerWorkerHw(void * task_id)
           //~5 per second
           if (isSha256Valid(hash) && hash_is_better(hash, result->best_hash))
           {
-            double diff_hash = diff_from_target(hash);
-            result->difficulty = diff_hash;
+            result->difficulty = diff_from_target(hash);
             result->nonce = job->nonce_start+n;
             memcpy(result->hash, hash, sizeof(hash));
             memcpy(result->best_hash, hash, sizeof(hash));
           }
         }
-        if (
-             (uint8_t)(n & 0xFF) == 0 &&
-             s_working_current_job_id.load(std::memory_order_acquire) != job_in_work)
+        if (__builtin_expect((n & JOB_CANCELLATION_CHECK_MASK) == 0, 0))
         {
-          result->nonce_count = n+1;
-          break;
+          current_job_id = s_working_current_job_id.load(std::memory_order_acquire);
+          if (__builtin_expect(current_job_id != job_in_work, 0))
+          {
+            result->nonce_count = n + 1;
+            break;
+          }
         }
       }
       esp_sha_unlock_engine(SHA2_256);

@@ -18,7 +18,7 @@
 // Job cancellation check frequency (power of 2 for efficient masking)
 // Check every N nonces for new job - higher = less overhead, slower response
 // 0x3FF = 1024 nonces (optimized), 0xFF = 256 nonces (original)
-#define JOB_CANCELLATION_CHECK_MASK 0xFF
+#define JOB_CANCELLATION_CHECK_MASK 0x3FF
 
 // Job queue sizes (increased for better miner throughput)
 #define JOB_QUEUE_SIZE          10
