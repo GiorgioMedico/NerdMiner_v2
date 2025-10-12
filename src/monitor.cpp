@@ -32,7 +32,11 @@ extern monitor_data mMonitor;
 
 //from saved config
 extern TSettings Settings; 
+#ifdef DEBUG_HARDCODED_CONFIG
+bool invertColors = DEBUG_INVERT_COLORS;
+#else
 bool invertColors = false;
+#endif
 
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 3600, 3600000);  // 1 hour update interval
