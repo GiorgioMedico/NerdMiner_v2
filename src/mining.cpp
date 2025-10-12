@@ -44,7 +44,7 @@ uint32_t templates = 0;
 std::atomic<uint32_t> hashes{0};      // Atomic: compound operations (+=, -=) can be interrupted
 std::atomic<uint32_t> Mhashes{0};     // Atomic: compound operations (+=) can be interrupted
 uint32_t totalKHashes = 0;
-float elapsedKHs = 0.0f;
+double elapsedKHs = 0.0;
 uint64_t upTime = 0;
 
 uint32_t shares = 0; // increase if blockhash has 32 bits of zeroes
@@ -124,14 +124,6 @@ bool checkPoolConnection(void)
   return true;
 }
 
-// Helper: Handle 32-bit timestamp wraparound (occurs every ~49 days)
-static inline void adjust_for_wraparound(uint32_t now, uint32_t &old_time) 
-{
-  if (now < old_time) {
-    old_time = now;
-  }
-}
-
 // Helper: Calculate time difference with wraparound handling
 static inline uint32_t time_elapsed(uint32_t now, uint32_t start) 
 {
@@ -145,12 +137,11 @@ uint32_t mStart0Hashrate = 0;
 bool checkPoolInactivity(uint32_t keepAliveTime, uint32_t inactivityTime)
 {
     // Read hashrate calculated by runMonitor (no race condition, no wraparound issues)
-    float elapsedKHs_local = elapsedKHs;
+    double elapsedKHs_local = elapsedKHs;
 
     uint32_t time_now = millis();
 
     // If no shares sent to pool, send something to pool to hold socket open
-    adjust_for_wraparound(time_now, mLastTXtoPool);
     if (time_now > mLastTXtoPool + keepAliveTime)
     {
       mLastTXtoPool = time_now;
@@ -158,7 +149,7 @@ bool checkPoolInactivity(uint32_t keepAliveTime, uint32_t inactivityTime)
       tx_suggest_difficulty(client, DEFAULT_DIFFICULTY);
     }
 
-    if(elapsedKHs_local <= 0.0f)
+    if(elapsedKHs_local <= 0.0)
     {
       //Check if hashrate is 0 during inactivityTIme
       if(mStart0Hashrate == 0) 
@@ -413,13 +404,12 @@ void runStratumWorker(void *name)
 
     {
       uint32_t time_now = millis();
-      adjust_for_wraparound(time_now, last_job_time);
 
       // Reconnect if no job received for 10 minutes
       if (time_now >= last_job_time + JOB_TIMEOUT_MS)
       {
         uint32_t elapsed_sec = (time_now - last_job_time) / 1000;
-        DEBUG_SERIAL_PRINTF("[POOL] ⏱️ JOB TIMEOUT: No job for %lu seconds (>600s) - reconnecting...\n", elapsed_sec);
+        DEBUG_SERIAL_PRINTF("[POOL] ⏱️ JOB TIMEOUT: No job for %lu seconds - reconnecting...\n", elapsed_sec);
         client.stop();
         isMinerSuscribed = false;
         MiningJobStop(job_pool, s_submission_map);
@@ -515,24 +505,28 @@ void runStratumWorker(void *name)
                                           std::list<std::shared_ptr<JobRequest>> new_hw_jobs;
                                           #endif
 
-                                          for (int i = 0; i < 4; ++ i)
+                                          // Create all SW jobs first - fill queue completely
+                                          for (int i = 0; i < JOB_QUEUE_SIZE; ++ i)
                                           {
-                                            #if 1
                                             JobPush(new_sw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_SW, currentPoolDifficulty, mMiner.bytearray_blockheader, diget_mid, bake,
                                                     mJob.job_id.c_str(), mJob.ntime.c_str(), mWorker.extranonce2.c_str());
                                             nonce_pool += NONCE_PER_JOB_SW;  // Sequential increment (wraparound automatic)
-                                            #endif
-                                            #ifdef HARDWARE_SHA256
-                                              #if defined(CONFIG_IDF_TARGET_ESP32)
-                                                JobPush(new_hw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, sha_buffer_swap, hw_midstate, bake,
-                                                        mJob.job_id.c_str(), mJob.ntime.c_str(), mWorker.extranonce2.c_str());
-                                              #else
-                                                JobPush(new_hw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, mMiner.bytearray_blockheader, hw_midstate, bake,
-                                                        mJob.job_id.c_str(), mJob.ntime.c_str(), mWorker.extranonce2.c_str());
-                                              #endif
-                                            nonce_pool += NONCE_PER_JOB_HW;  // Sequential increment (wraparound automatic)
-                                            #endif
                                           }
+
+                                          // Then create all HW jobs - fill queue completely
+                                          #ifdef HARDWARE_SHA256
+                                          for (int i = 0; i < JOB_QUEUE_SIZE; ++ i)
+                                          {
+                                            #if defined(CONFIG_IDF_TARGET_ESP32)
+                                              JobPush(new_hw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, sha_buffer_swap, hw_midstate, bake,
+                                                      mJob.job_id.c_str(), mJob.ntime.c_str(), mWorker.extranonce2.c_str());
+                                            #else
+                                              JobPush(new_hw_jobs, job_pool, nonce_pool, NONCE_PER_JOB_HW, currentPoolDifficulty, mMiner.bytearray_blockheader, hw_midstate, bake,
+                                                      mJob.job_id.c_str(), mJob.ntime.c_str(), mWorker.extranonce2.c_str());
+                                            #endif
+                                            nonce_pool += NONCE_PER_JOB_HW;  // Sequential increment (wraparound automatic)
+                                          }
+                                          #endif
 
                                           // Insert SW jobs directly (same core - no mutex needed)
                                           s_job_request_list_sw.splice(s_job_request_list_sw.end(), new_sw_jobs);
@@ -621,14 +615,6 @@ void runStratumWorker(void *name)
       // Check SW queue size directly (same core - no mutex needed)
       current_sw_size = s_job_request_list_sw.size();
 
-      // Check HW queue size with mutex (Core 0 ↔ Core 1 sync)
-      #ifdef HARDWARE_SHA256
-      {
-        std::lock_guard<std::mutex> lock(s_job_mutex_hw);
-        current_hw_size = s_job_request_list_hw.size();
-      }
-      #endif
-
       // Incremental refill SW: Create jobs outside lock
       constexpr size_t REFILL_THRESHOLD_SW = JOB_QUEUE_SIZE / 2;
       if (current_sw_size < REFILL_THRESHOLD_SW)
@@ -643,7 +629,13 @@ void runStratumWorker(void *name)
         }
       }
 
+      // Check HW queue size with mutex (Core 0 ↔ Core 1 sync)
       #ifdef HARDWARE_SHA256
+      {
+        std::lock_guard<std::mutex> lock(s_job_mutex_hw);
+        current_hw_size = s_job_request_list_hw.size();
+      }
+
       // Incremental refill HW: Create jobs outside lock
       constexpr size_t REFILL_THRESHOLD_HW = JOB_QUEUE_SIZE / 2;
       if (current_hw_size < REFILL_THRESHOLD_HW)
@@ -690,7 +682,7 @@ void runStratumWorker(void *name)
     // Batch atomic hash updates: accumulate locally, update once at end
     uint32_t total_hashes_processed = 0;
 
-    // Convert current pool difficulty to target for precise comparison (avoids float precision errors)
+    // Convert current pool difficulty to target for precise comparison
     uint8_t pool_target[32];
     if (!difficulty_to_target(currentPoolDifficulty, pool_target)) {
         memset(pool_target, 0xFF, 32);  // Fallback to max target if conversion fails
@@ -1485,7 +1477,7 @@ void runMonitor(void *name)
       (static_cast<uint64_t>(Mhashes.load()) * 1000000ULL) +
       static_cast<uint64_t>(hashes.load());
   totalKHashes = static_cast<uint32_t>(lastTotalHashes / 1000ULL);
-  elapsedKHs = 0.0f;
+  elapsedKHs = 0.0;
   uint32_t last_update_millis = millis();
   uint32_t uptime_frac = 0;
 
@@ -1508,7 +1500,7 @@ void runMonitor(void *name)
         deltaHashes = currentTotalHashes - lastTotalHashes;
       else
         deltaHashes = currentTotalHashes;
-      const float deltaKH = static_cast<float>(static_cast<double>(deltaHashes) / 1000.0);
+      const double deltaKH = static_cast<double>(deltaHashes) / 1000.0;
       elapsedKHs = deltaKH;
       totalKHashes = static_cast<uint32_t>(currentTotalHashes / 1000ULL);
       lastTotalHashes = currentTotalHashes;
@@ -1520,12 +1512,10 @@ void runMonitor(void *name)
         upTime++;
       }
 
-      // Serial.printf("[HASHRATE] %.2f KH/s\n", (float)elapsedKHs * 1000.0 / mElapsed);
-
       drawCurrentScreen(mElapsed);
 
       // Monitor state when hashrate is 0.0
-      if (elapsedKHs <= 0.0f)
+      if (elapsedKHs <= 0.0)
       {
         bool subscribed = isMinerSuscribed;
         bool connected = s_client_connected;

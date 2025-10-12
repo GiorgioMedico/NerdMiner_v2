@@ -20,7 +20,7 @@ extern uint32_t templates;
 extern std::atomic<uint32_t> hashes;
 extern std::atomic<uint32_t> Mhashes;
 extern uint32_t totalKHashes;
-extern float elapsedKHs;
+extern double elapsedKHs;
 extern uint64_t upTime;
 
 extern uint32_t shares; // increase if blockhash has 32 bits of zeroes
@@ -175,7 +175,7 @@ static double s_last_avg_hashrate = -1.0;  // Track last value to avoid recalcul
 
 String getCurrentHashRate(unsigned long mElapsed)
 {
-  double hashrate = (double)elapsedKHs * 1000.0 / (double)mElapsed;
+  double hashrate = elapsedKHs * 1000.0 / (double)mElapsed;
 
   s_hashrate_summ += hashrate;
   s_hashrate_avg_list.push_back(hashrate);
