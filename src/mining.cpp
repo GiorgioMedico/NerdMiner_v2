@@ -726,6 +726,10 @@ void runStratumWorker(void *name)
         } 
         else
           submission.isValid = false;
+          #ifdef DEBUG_MINING
+          if(checkValid(res->hash, mMiner.bytearray_target))
+            DEBUG_SERIAL_PRINTF("[ERROR]❌❌ checkValid found valid hash %u \n", res->hash); 
+          #endif
 
         s_submission_map.emplace(sumbit_id, submission);
 

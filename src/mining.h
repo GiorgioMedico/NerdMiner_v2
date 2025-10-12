@@ -10,9 +10,6 @@
 #define KEEPALIVE_TIME_ms       30000
 #define POOLINACTIVITY_TIME_ms  60000
 
-// Network safety
-#define MAX_POOL_LINE_SIZE      4096
-
 #define SHA_HARDWARE_TIMEOUT_CYCLES 200000
 
 // Hardware SHA batch size - process this many nonces before checking job cancellation
