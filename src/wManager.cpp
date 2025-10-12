@@ -150,6 +150,56 @@ void init_WifiManager()
     // Change to true when testing to force configuration every time we run
     bool forceConfig = false;
 
+#ifdef DEBUG_HARDCODED_CONFIG
+    // ========== DEBUG MODE: Use hardcoded configuration ==========
+    // This bypasses NVS, SD card, and WiFi portal for fast debugging
+    DEBUG_SERIAL_PRINTLN("========================================");
+    DEBUG_SERIAL_PRINTLN("DEBUG_HARDCODED_CONFIG enabled!");
+    DEBUG_SERIAL_PRINTLN("Using hardcoded configuration...");
+    DEBUG_SERIAL_PRINTLN("========================================");
+
+    // Load hardcoded settings
+    Settings.WifiSSID = DEBUG_WIFI_SSID;
+    Settings.WifiPW = DEBUG_WIFI_PASSWORD;
+    Settings.PoolAddress = DEBUG_POOL_URL;
+    Settings.PoolPort = DEBUG_POOL_PORT;
+    strncpy(Settings.BtcWallet, DEBUG_BTC_WALLET, sizeof(Settings.BtcWallet));
+    strncpy(Settings.PoolPassword, DEBUG_POOL_PASSWORD, sizeof(Settings.PoolPassword));
+    Settings.Timezone = DEBUG_TIMEZONE;
+    Settings.invertColors = DEBUG_INVERT_COLORS;
+    Settings.Brightness = DEBUG_BRIGHTNESS;
+
+    // Print loaded config for verification
+    DEBUG_SERIAL_PRINTF("WiFi SSID: %s\n", Settings.WifiSSID.c_str());
+    DEBUG_SERIAL_PRINTF("Pool: %s:%d\n", Settings.PoolAddress.c_str(), Settings.PoolPort);
+    DEBUG_SERIAL_PRINTF("Wallet: %s\n", Settings.BtcWallet);
+
+    // Connect to WiFi directly
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(Settings.WifiSSID.c_str(), Settings.WifiPW.c_str());
+
+    DEBUG_SERIAL_PRINT("Connecting to WiFi");
+    int wifi_retry = 0;
+    while (WiFi.status() != WL_CONNECTED && wifi_retry < 30) {
+        delay(500);
+        DEBUG_SERIAL_PRINT(".");
+        wifi_retry++;
+    }
+    DEBUG_SERIAL_PRINTLN();
+
+    if (WiFi.status() == WL_CONNECTED) {
+        DEBUG_SERIAL_PRINTLN("WiFi connected!");
+        DEBUG_SERIAL_PRINT("IP address: ");
+        DEBUG_SERIAL_PRINTLN(WiFi.localIP());
+        mMonitor.NerdStatus.store(NM_Connecting, std::memory_order_release);
+    } else {
+        DEBUG_SERIAL_PRINTLN("WiFi connection failed!");
+        DEBUG_SERIAL_PRINTLN("Check your DEBUG_WIFI_SSID and DEBUG_WIFI_PASSWORD in storage.h");
+    }
+
+    return; // Skip all the normal config loading below
+#endif
+
 #if defined(PIN_BUTTON_2)
     // Check if button2 is pressed to enter configMode with actual configuration
     if (!digitalRead(PIN_BUTTON_2)) {

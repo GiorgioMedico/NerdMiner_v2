@@ -20,6 +20,20 @@
 #define DEFAULT_INVERTCOLORS	false
 #define DEFAULT_BRIGHTNESS	250
 
+// Hardcoded config for fast debugging (only when DEBUG_HARDCODED_CONFIG is defined)
+// Edit these values for your testing needs, then add -D DEBUG_HARDCODED_CONFIG to your build_flags
+#ifdef DEBUG_HARDCODED_CONFIG
+#define DEBUG_WIFI_SSID         "Vodafone-C01270070"      // Your WiFi network name
+#define DEBUG_WIFI_PASSWORD     "Bolo2022"  // Your WiFi password
+#define DEBUG_POOL_URL          "public-pool.io"    // Mining pool URL
+#define DEBUG_POOL_PORT         21496               // Mining pool port
+#define DEBUG_BTC_WALLET        "bc1qgvvwktl0l593eukc58m4ezs44gqa2xhunqyevu"    // Your Bitcoin wallet address
+#define DEBUG_POOL_PASSWORD     "x"                 // Pool password (usually "x")
+#define DEBUG_TIMEZONE          2                   // Timezone offset from UTC
+#define DEBUG_INVERT_COLORS     false               // Invert display colors
+#define DEBUG_BRIGHTNESS        200                 // Screen brightness (0-255)
+#endif
+
 // JSON config files
 #define JSON_CONFIG_FILE	"/config.json"
 
