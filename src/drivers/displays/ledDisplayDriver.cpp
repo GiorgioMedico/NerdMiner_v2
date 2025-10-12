@@ -85,7 +85,7 @@ void ledDisplay_DoLedStuff(unsigned long frame)
     return;
   }
 
-  NMState status = mMonitor.NerdStatus.load(std::memory_order_acquire);
+  NMState status = mMonitor.NerdStatus;
   switch (status)
   {
   case NM_waitingConfig:

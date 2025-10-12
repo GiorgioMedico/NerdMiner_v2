@@ -16,17 +16,17 @@
 #include "drivers/devices/device.h"
 #include "logging.h"
 
-extern std::atomic<uint32_t> templates;
+extern uint32_t templates;
 extern std::atomic<uint32_t> hashes;
 extern std::atomic<uint32_t> Mhashes;
-extern std::atomic<uint32_t> totalKHashes;
-extern std::atomic<float> elapsedKHs;
-extern std::atomic<uint64_t> upTime;
+extern uint32_t totalKHashes;
+extern float elapsedKHs;
+extern uint64_t upTime;
 
-extern std::atomic<uint32_t> shares; // increase if blockhash has 32 bits of zeroes
-extern std::atomic<uint32_t> valids; // increased if blockhash <= targethalfshares
+extern uint32_t shares; // increase if blockhash has 32 bits of zeroes
+extern uint32_t valids; // increased if blockhash <= targethalfshares
 
-extern std::atomic<float> best_diff; // track best diff (lock-free)
+extern double best_diff; // track best diff (visualization only)
 
 extern monitor_data mMonitor;
 
@@ -175,7 +175,7 @@ static double s_last_avg_hashrate = -1.0;  // Track last value to avoid recalcul
 
 String getCurrentHashRate(unsigned long mElapsed)
 {
-  double hashrate = (double)elapsedKHs.load(std::memory_order_relaxed) * 1000.0 / (double)mElapsed;
+  double hashrate = (double)elapsedKHs * 1000.0 / (double)mElapsed;
 
   s_hashrate_summ += hashrate;
   s_hashrate_avg_list.push_back(hashrate);
@@ -238,11 +238,11 @@ mining_data getMiningData(unsigned long mElapsed)
   mining_data data;
 
   char bestDiffBuf[16];
-  suffix_string(best_diff.load(std::memory_order_relaxed), bestDiffBuf, sizeof(bestDiffBuf), 0);
+  suffix_string(best_diff, bestDiffBuf, sizeof(bestDiffBuf), 0);
   data.bestDiff = bestDiffBuf;
 
   // timeMining - format uptime
-  uint64_t tm = upTime.load(std::memory_order_relaxed);
+  uint64_t tm = upTime;
   int secs = tm % 60;
   tm /= 60;
   int mins = tm % 60;
@@ -264,15 +264,15 @@ mining_data getMiningData(unsigned long mElapsed)
   }
 
   // Direct String assignments - numeric values auto-convert
-  data.completedShares = shares.load(std::memory_order_relaxed);
-  data.totalMHashes = Mhashes.load(std::memory_order_relaxed);
-  const uint32_t totalKHInt = totalKHashes.load(std::memory_order_relaxed);
-  const uint32_t hashRemainder = hashes.load(std::memory_order_relaxed) % 1000;
+  data.completedShares = shares;
+  data.totalMHashes = Mhashes.load();  // Explicit load for atomic
+  const uint32_t totalKHInt = totalKHashes;
+  const uint32_t hashRemainder = hashes.load() % 1000;  // Explicit load for atomic
   const float totalKH = static_cast<float>(totalKHInt) + static_cast<float>(hashRemainder) / 1000.0f;
   data.totalKHashes = String(totalKH, 2);
   data.currentHashRate = getCurrentHashRate(mElapsed);
-  data.templates = templates.load(std::memory_order_relaxed);
-  data.valids = valids.load(std::memory_order_relaxed);
+  data.templates = templates;
+  data.valids = valids;
   data.temp = cachedTemp;
   data.currentTime = getTime();
 

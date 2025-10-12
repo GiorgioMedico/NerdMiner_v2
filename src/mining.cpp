@@ -40,51 +40,50 @@
 
 #endif
 
-std::atomic<uint32_t> templates{0};
-std::atomic<uint32_t> hashes{0};
-std::atomic<uint32_t> Mhashes{0};
-std::atomic<uint32_t> totalKHashes{0};
-std::atomic<float> elapsedKHs{0.0f};
-std::atomic<uint64_t> upTime{0};
+uint32_t templates = 0;
+std::atomic<uint32_t> hashes{0};      // Atomic: compound operations (+=, -=) can be interrupted
+std::atomic<uint32_t> Mhashes{0};     // Atomic: compound operations (+=) can be interrupted
+uint32_t totalKHashes = 0;
+float elapsedKHs = 0.0f;
+uint64_t upTime = 0;
 
-std::atomic<uint32_t> shares{0}; // increase if blockhash has 32 bits of zeroes
-std::atomic<uint32_t> valids{0}; // increased if blockhash <= target
+uint32_t shares = 0; // increase if blockhash has 32 bits of zeroes
+uint32_t valids = 0; // increased if blockhash <= target
 
-// Track best diff using lock-free atomic float
-std::atomic<float> best_diff(0.0f);
+// Track best diff (used for visualization only, no strict synchronization needed)
+double best_diff = 0.0;
 
 // Track SHA hardware timeout events for diagnostics
-std::atomic<uint32_t> sha_timeout_count{0};
+uint32_t sha_timeout_count = 0;
 
 // Variables to hold data from custom textboxes
-//Track mining stats in non volatile memory
 extern TSettings Settings;
 
 IPAddress serverIP(1, 1, 1, 1); //Temporarily save poolIPaddres
 
-//Global work data 
+//Global work data
 static WiFiClient client;
-static std::atomic<bool> s_client_connected{false};  // Thread-safe proxy for client.connected()
+static volatile bool s_client_connected = false;  // Proxy for client.connected() (Core 1 only)
 static miner_data mMiner; //Global miner data (Create a miner class TODO)
 mining_subscribe mWorker;
 mining_job mJob;
 monitor_data mMonitor;
-static std::atomic<bool> isMinerSuscribed{false};
+static volatile bool isMinerSuscribed = false;
 uint32_t mLastTXtoPool = millis();
 
 bool checkPoolConnection(void)
 {
 
   // Fast path: Already connected
-  if (client.connected()) 
+  if (client.connected())
   {
-    s_client_connected.store(true, std::memory_order_release);
+    s_client_connected = true;
     return true;
   }
 
   // Slow path: Disconnected, attempt reconnection
-  s_client_connected.store(false, std::memory_order_release);
-  isMinerSuscribed.store(false, std::memory_order_release);
+  s_client_connected = false;
+  isMinerSuscribed = false;
 
   DEBUG_SERIAL_PRINTF("[POOL] Client not connected, attempting to connect to %s:%d\n", Settings.PoolAddress.c_str(), Settings.PoolPort);
 
@@ -121,7 +120,7 @@ bool checkPoolConnection(void)
   }
 
   DEBUG_SERIAL_PRINTF("[POOL] ✓ TCP connection established to %s:%d\n", Settings.PoolAddress.c_str(), Settings.PoolPort);
-  s_client_connected.store(true, std::memory_order_release);
+  s_client_connected = true;
   return true;
 }
 
@@ -146,7 +145,7 @@ uint32_t mStart0Hashrate = 0;
 bool checkPoolInactivity(uint32_t keepAliveTime, uint32_t inactivityTime)
 {
     // Read hashrate calculated by runMonitor (no race condition, no wraparound issues)
-    float elapsedKHs_local = elapsedKHs.load(std::memory_order_relaxed);
+    float elapsedKHs_local = elapsedKHs;
 
     uint32_t time_now = millis();
 
@@ -270,7 +269,7 @@ struct Submission
   uint32_t timestamp_ms;  // Timestamp when submission was created (for timeout cleanup)
 };
 
-static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, std::shared_ptr<Submission>> &submission_map)
+static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, Submission> &submission_map)
 {
   // Clear HW lists with mutex (Core 0 ↔ Core 1 sync required)
   #ifdef HARDWARE_SHA256
@@ -323,7 +322,7 @@ void runStratumWorker(void *name)
   DEBUG_SERIAL_PRINTF("### [Total Heap / Free heap / Min free heap]: %d / %d / %d \n", ESP.getHeapSize(), ESP.getFreeHeap(), ESP.getMinFreeHeap());
   #endif
 
-  std::map<uint32_t, std::shared_ptr<Submission>> s_submission_map;
+  std::map<uint32_t, Submission> s_submission_map;
 
   // connect to pool
   double currentPoolDifficulty = DEFAULT_DIFFICULTY;
@@ -339,8 +338,8 @@ void runStratumWorker(void *name)
     {
       // WiFi is disconnected, so reconnect now
       DEBUG_SERIAL_PRINTLN("[WIFI] ❌ WiFi disconnected - attempting reconnection");
-      mMonitor.NerdStatus.store(NM_Connecting, std::memory_order_release);
-      s_client_connected.store(false, std::memory_order_release);
+      mMonitor.NerdStatus = NM_Connecting;
+      s_client_connected = false;
       MiningJobStop(job_pool, s_submission_map);
       WiFi.reconnect();
       vTaskDelay(5000 / portTICK_PERIOD_MS);
@@ -358,7 +357,7 @@ void runStratumWorker(void *name)
       continue;
     }
 
-    if(!isMinerSuscribed.load(std::memory_order_acquire))
+    if(!isMinerSuscribed)
     {
       //Stop miner current jobs
       DEBUG_SERIAL_PRINTLN("[STRATUM] Starting subscription handshake...");
@@ -394,7 +393,7 @@ void runStratumWorker(void *name)
       tx_suggest_difficulty(client, currentPoolDifficulty);
       DEBUG_SERIAL_PRINTF("[STRATUM] ✓ Difficulty suggestion sent: %.2f\n", currentPoolDifficulty);
 
-      isMinerSuscribed.store(true, std::memory_order_release);
+      isMinerSuscribed = true;
       uint32_t time_now = millis();
       mLastTXtoPool = time_now;
       last_job_time = time_now;
@@ -407,7 +406,7 @@ void runStratumWorker(void *name)
       //Restart connection
       DEBUG_SERIAL_PRINTLN("[POOL] ⏱️ TIMEOUT: No data received for >60s - reconnecting...");
       client.stop();
-      isMinerSuscribed.store(false, std::memory_order_release);
+      isMinerSuscribed = false;
       MiningJobStop(job_pool, s_submission_map);
       continue;
     }
@@ -422,7 +421,7 @@ void runStratumWorker(void *name)
         uint32_t elapsed_sec = (time_now - last_job_time) / 1000;
         DEBUG_SERIAL_PRINTF("[POOL] ⏱️ JOB TIMEOUT: No job for %lu seconds (>600s) - reconnecting...\n", elapsed_sec);
         client.stop();
-        isMinerSuscribed.store(false, std::memory_order_release);
+        isMinerSuscribed = false;
         MiningJobStop(job_pool, s_submission_map);
         continue;
       }
@@ -466,17 +465,17 @@ void runStratumWorker(void *name)
                                           }
                                           #endif
                                           //Increse templates readed
-                                          templates.fetch_add(1, std::memory_order_relaxed);
+                                          templates++;
                                           job_pool++;
                                           s_working_current_job_id.store(job_pool & 0xFF, std::memory_order_release); //Terminate current job in thread
 
                                           last_job_time = millis();
                                           mLastTXtoPool = last_job_time;
 
-                                          uint32_t h = hashes.load(std::memory_order_relaxed);
+                                          uint32_t h = hashes.load();  // Explicit load for atomic
                                           uint32_t mh = h / 1000000;
-                                          Mhashes.fetch_add(mh, std::memory_order_relaxed);
-                                          hashes.fetch_sub(mh * 1000000, std::memory_order_relaxed);
+                                          Mhashes += mh;  // Atomic fetch_add
+                                          hashes -= mh * 1000000;  // Atomic fetch_sub
 
                                           //Prepare data for new jobs
                                           mMiner=calculateMiningData(mWorker, mJob);
@@ -550,7 +549,7 @@ void runStratumWorker(void *name)
                                       {
                                         DEBUG_SERIAL_PRINTF("[ERROR][JOB] ❌ Mining notify parse FAILED (line: %.100s) - reconnecting\n", line.c_str());
                                         client.stop();
-                                        isMinerSuscribed.store(false, std::memory_order_release);
+                                        isMinerSuscribed = false;
                                         MiningJobStop(job_pool, s_submission_map);
                                         first_job_received = false;
                                       }
@@ -566,19 +565,18 @@ void runStratumWorker(void *name)
                                         auto itt = s_submission_map.find(id);
                                         if (itt != s_submission_map.end())
                                         {
-                                          DEBUG_SERIAL_PRINTF("[SHARE] ✓ Share accepted (diff: %f)\n", itt->second->diff);
-                                          // Update best_diff if new difficulty is higher (single writer, safe without CAS)
-                                          float current = best_diff.load(std::memory_order_relaxed);
-                                          if (itt->second->diff > current)
+                                          DEBUG_SERIAL_PRINTF("[SHARE] ✓ Share accepted (diff: %f)\n", itt->second.diff);
+                                          // Update best_diff if new difficulty is higher (visualization only)
+                                          if (itt->second.diff > best_diff)
                                           {
-                                            best_diff.store(itt->second->diff, std::memory_order_relaxed);
+                                            best_diff = itt->second.diff;
                                           }
-                                          if (itt->second->is32bit)
-                                            shares.fetch_add(1, std::memory_order_relaxed);
-                                          if (itt->second->isValid)
+                                          if (itt->second.is32bit)
+                                            shares++;
+                                          if (itt->second.isValid)
                                           {
                                             DEBUG_SERIAL_PRINTLN("🎉 CONGRATULATIONS! Valid block found! 🎉");
-                                            valids.fetch_add(1, std::memory_order_relaxed);
+                                            valids++;
                                           }
                                           s_submission_map.erase(itt);
                                         } 
@@ -726,31 +724,31 @@ void runStratumWorker(void *name)
         
         mLastTXtoPool = millis();
 
-        std::shared_ptr<Submission> submission = std::make_shared<Submission>();
-        submission->diff = res->difficulty;
-        submission->is32bit = (res->hash[29] == 0 && res->hash[28] == 0);
-        submission->timestamp_ms = millis();  // Record submission time
-        if (submission->is32bit)
+        Submission submission{};
+        submission.diff = res->difficulty;
+        submission.is32bit = (res->hash[29] == 0 && res->hash[28] == 0);
+        submission.timestamp_ms = millis();  // Record submission time
+        if (submission.is32bit)
         {
-          submission->isValid = checkValid(res->hash, mMiner.bytearray_target);
+          submission.isValid = checkValid(res->hash, mMiner.bytearray_target);
         } 
         else
-          submission->isValid = false;
+          submission.isValid = false;
 
-          s_submission_map.insert(std::make_pair(sumbit_id, submission));
+        s_submission_map.emplace(sumbit_id, submission);
 
-          // Second pass: If still oversized, evict oldest entries (shouldn't happen often)
-          while (s_submission_map.size() > SUBMISSION_MAP_MAX) 
-          {
-            DEBUG_SERIAL_PRINTF("[WARN] Evicting oldest submission ID=%lu (map full)\n", s_submission_map.begin()->first);
-            s_submission_map.erase(s_submission_map.begin());
-          }
+        // Second pass: If still oversized, evict oldest entries (shouldn't happen often)
+        while (s_submission_map.size() > SUBMISSION_MAP_MAX) 
+        {
+          DEBUG_SERIAL_PRINTF("[WARN] Evicting oldest submission ID=%lu (map full)\n", s_submission_map.begin()->first);
+          s_submission_map.erase(s_submission_map.begin());
+        }
       }
     }
 
-    // Apply batched hash update (single atomic operation instead of per-result)
+    // Apply batched hash update
     if (total_hashes_processed > 0)
-      hashes.fetch_add(total_hashes_processed, std::memory_order_relaxed);
+      hashes += total_hashes_processed;
   }
 }
 
@@ -1005,9 +1003,9 @@ static inline __attribute__((always_inline, hot)) bool nerd_sha_hal_wait_idle()
 
     // Timeout occurred
     if (__builtin_expect(slow_timeout == 0, 0)) {
-        uint32_t count = sha_timeout_count.fetch_add(1, std::memory_order_relaxed);
-        if (count % 1000 == 0 && count > 0) {
-            DEBUG_SERIAL_PRINTF("[SHA] Hardware timeout count: %lu\n", count);
+        sha_timeout_count++;
+        if (sha_timeout_count % 1000 == 0 && sha_timeout_count > 0) {
+            DEBUG_SERIAL_PRINTF("[SHA] Hardware timeout count: %lu\n", (unsigned long)sha_timeout_count);
         }
         return false;
     }
@@ -1238,9 +1236,9 @@ static inline bool nerd_sha_hal_wait_idle()
         asm volatile("nop");
     }
     if (timeout == 0) {
-        uint32_t count = sha_timeout_count.fetch_add(1, std::memory_order_relaxed);
-        if (count % 1000 == 0 && count > 0) {
-            DEBUG_SERIAL_PRINTF("[SHA] Hardware timeout count: %lu\n", count);
+        sha_timeout_count++;
+        if (sha_timeout_count % 1000 == 0 && sha_timeout_count > 0) {
+            DEBUG_SERIAL_PRINTF("[SHA] Hardware timeout count: %lu\n", (unsigned long)sha_timeout_count);
         }
         return false;
     }
@@ -1484,10 +1482,10 @@ void runMonitor(void *name)
   unsigned long frame = 0;
 
   uint64_t lastTotalHashes =
-      (static_cast<uint64_t>(Mhashes.load(std::memory_order_relaxed)) * 1000000ULL) +
-      static_cast<uint64_t>(hashes.load(std::memory_order_relaxed));
-  totalKHashes.store(static_cast<uint32_t>(lastTotalHashes / 1000ULL), std::memory_order_relaxed);
-  elapsedKHs.store(0.0f, std::memory_order_relaxed);
+      (static_cast<uint64_t>(Mhashes.load()) * 1000000ULL) +
+      static_cast<uint64_t>(hashes.load());
+  totalKHashes = static_cast<uint32_t>(lastTotalHashes / 1000ULL);
+  elapsedKHs = 0.0f;
   uint32_t last_update_millis = millis();
   uint32_t uptime_frac = 0;
 
@@ -1499,27 +1497,27 @@ void runMonitor(void *name)
     
     uint32_t mElapsed = now_millis - mLastCheck;
     if (mElapsed >= 1000)
-    { 
+    {
       mLastCheck = now_millis;
       last_update_millis = now_millis;
       const uint64_t currentTotalHashes =
-          (static_cast<uint64_t>(Mhashes.load(std::memory_order_relaxed)) * 1000000ULL) +
-          static_cast<uint64_t>(hashes.load(std::memory_order_relaxed));
+          (static_cast<uint64_t>(Mhashes.load()) * 1000000ULL) +
+          static_cast<uint64_t>(hashes.load());
       uint64_t deltaHashes;
       if (currentTotalHashes >= lastTotalHashes)
         deltaHashes = currentTotalHashes - lastTotalHashes;
       else
         deltaHashes = currentTotalHashes;
       const float deltaKH = static_cast<float>(static_cast<double>(deltaHashes) / 1000.0);
-      elapsedKHs.store(deltaKH, std::memory_order_relaxed);
-      totalKHashes.store(static_cast<uint32_t>(currentTotalHashes / 1000ULL), std::memory_order_relaxed);
+      elapsedKHs = deltaKH;
+      totalKHashes = static_cast<uint32_t>(currentTotalHashes / 1000ULL);
       lastTotalHashes = currentTotalHashes;
 
       uptime_frac += mElapsed;
       while (uptime_frac >= 1000)
       {
         uptime_frac -= 1000;
-        upTime.fetch_add(1, std::memory_order_relaxed);
+        upTime++;
       }
 
       // Serial.printf("[HASHRATE] %.2f KH/s\n", (float)elapsedKHs * 1000.0 / mElapsed);
@@ -1527,10 +1525,10 @@ void runMonitor(void *name)
       drawCurrentScreen(mElapsed);
 
       // Monitor state when hashrate is 0.0
-      if (elapsedKHs.load(std::memory_order_relaxed) <= 0.0f)
+      if (elapsedKHs <= 0.0f)
       {
-        bool subscribed = isMinerSuscribed.load(std::memory_order_acquire);
-        bool connected = s_client_connected.load(std::memory_order_acquire);
+        bool subscribed = isMinerSuscribed;
+        bool connected = s_client_connected;
         DEBUG_SERIAL_PRINTF(">>> [i] Miner: newJob>%s / inRun>%s) - Client: connected>%s / subscribed>%s / wificonnected>%s\n",
             "true",//(1) ? "true" : "false",
             subscribed ? "true" : "false",

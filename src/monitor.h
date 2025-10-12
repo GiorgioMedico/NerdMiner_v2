@@ -24,7 +24,7 @@ enum NMState {
 typedef struct{
   uint8_t screen;
   bool rotation;
-  std::atomic<NMState> NerdStatus;
+  volatile NMState NerdStatus;
 }monitor_data;
 
 typedef struct {

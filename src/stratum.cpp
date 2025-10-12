@@ -14,13 +14,13 @@
 
 
 
-std::atomic<unsigned long> id(1);
+unsigned long id = 1;
 
-// Thread-safe atomic increment (natural wraparound to 0 is acceptable for JSON-RPC ID)
-unsigned long getNextId(std::atomic<unsigned long>& id)
+// Increment ID counter (single-threaded access only)
+unsigned long getNextId(unsigned long& id)
 {
-    unsigned long next_id = id.fetch_add(1, std::memory_order_relaxed);
-    DEBUG_SERIAL_PRINTF("[DEBUG] getNextId: returning %lu, next will be %lu\n", next_id, id.load(std::memory_order_relaxed));
+    unsigned long next_id = id++;
+    DEBUG_SERIAL_PRINTF("[DEBUG] getNextId: returning %lu, next will be %lu\n", next_id, id);
     return next_id;
 }
 

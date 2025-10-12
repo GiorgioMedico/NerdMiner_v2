@@ -191,7 +191,7 @@ void init_WifiManager()
         DEBUG_SERIAL_PRINTLN("WiFi connected!");
         DEBUG_SERIAL_PRINT("IP address: ");
         DEBUG_SERIAL_PRINTLN(WiFi.localIP());
-        mMonitor.NerdStatus.store(NM_Connecting, std::memory_order_release);
+        mMonitor.NerdStatus = NM_Connecting;
     } else {
         DEBUG_SERIAL_PRINTLN("WiFi connection failed!");
         DEBUG_SERIAL_PRINTLN("Check your DEBUG_WIFI_SSID and DEBUG_WIFI_PASSWORD in storage.h");
@@ -307,7 +307,7 @@ void init_WifiManager()
         //No configuramos timeout al modulo
         wm.setConfigPortalBlocking(true); //Hacemos que el portal SI bloquee el firmware
         drawSetupScreen();
-        mMonitor.NerdStatus.store(NM_Connecting, std::memory_order_release);
+        mMonitor.NerdStatus = NM_Connecting;
         wm.startConfigPortal(apName, DEFAULT_WIFIPW);
 
         if (shouldSaveConfig)
@@ -334,7 +334,7 @@ void init_WifiManager()
     else
     {
         //Tratamos de conectar con la configuración inicial ya almacenada
-        mMonitor.NerdStatus.store(NM_Connecting, std::memory_order_release);
+        mMonitor.NerdStatus = NM_Connecting;
         // disable captive portal redirection
         wm.setCaptivePortalEnable(true); 
         wm.setConfigPortalBlocking(true);

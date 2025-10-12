@@ -62,7 +62,7 @@ typedef enum {
     STRATUM_ERR_MALFORMED_PAYLOAD
 } stratum_error;
 
-unsigned long getNextId(std::atomic<unsigned long>& id);
+unsigned long getNextId(unsigned long& id);
 bool verifyPayload (const char* line);
 bool checkError(const StaticJsonDocument<BUFFER_JSON_DOC> &doc);
 

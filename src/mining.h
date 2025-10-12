@@ -34,7 +34,7 @@
 #define RESULT_LIST_SIZE        20
 #define SUBMISSION_MAP_MAX       40
 
-#define WDT_COUNTER 20 //8
+#define WDT_COUNTER 8
 
 //#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3)
 #ifndef HARDWARE_SHA256
