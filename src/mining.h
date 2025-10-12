@@ -20,10 +20,19 @@
 // 0x3FF = 1024 nonces (optimized), 0xFF = 256 nonces (original)
 #define JOB_CANCELLATION_CHECK_MASK 0x3FF
 
+// Hardware SHA batch size - process this many nonces before checking job cancellation
+// Should be a power of 2 for optimal performance. Larger batch = less overhead, slower job switch
+// Typical values: 256 (responsive), 512 (balanced), 1024 (maximum throughput)
+#define BATCH_HW_SIZE 1024
+
+// Software SHA batch size - smaller than HW since SW mining is slower
+// Matches original check frequency (every 256 nonces) for responsive job switching
+#define BATCH_SW_SIZE 128
+
 // Job queue sizes (increased for better miner throughput)
-#define JOB_QUEUE_SIZE          10
-#define RESULT_LIST_SIZE        16
-#define SUBMISSION_MAP_MAX       32
+#define JOB_QUEUE_SIZE          14
+#define RESULT_LIST_SIZE        20
+#define SUBMISSION_MAP_MAX       40
 
 #define WDT_COUNTER 20 //8
 
@@ -38,7 +47,7 @@
 // Nonce start values for different mining modes
 #define NONCE_START_RANDOM     0xDA54E700  // Random start nonce (non-zero for compatibility)
 
-#define JOB_REFILL_BATCH           6   // Incremental refill: jobs created per batch
+#define JOB_REFILL_BATCH           8   // Incremental refill: jobs created per batch
 #define JOB_TIMEOUT_MS             (10*60*1000)  // 10 minutes without new job triggers reconnect
 
 

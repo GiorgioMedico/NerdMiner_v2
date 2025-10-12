@@ -13,7 +13,7 @@
 
 //API public-pool.io
 #define getPublicPool "https://public-pool.io:40557/api/client/" // +btcString
-#define UPDATE_POOL_min   2
+#define UPDATE_POOL_min   10
 
 enum NMState {
   NM_waitingConfig,

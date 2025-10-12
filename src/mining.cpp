@@ -227,12 +227,18 @@ static inline void initialize_best_hash(JobResult& result)
   }
 }
 
-static std::mutex s_job_mutex;
+// Single mutex for HW mining only (Core 0 ↔ Core 1 sync)
+// SW operations don't need mutex (same core as Stratum worker)
+static std::mutex s_job_mutex_hw;
+
 std::list<std::shared_ptr<JobRequest>> s_job_request_list_sw;
 #ifdef HARDWARE_SHA256
 std::list<std::shared_ptr<JobRequest>> s_job_request_list_hw;
 #endif
-std::list<std::shared_ptr<JobResult>> s_job_result_list;
+
+// Separate result lists (eliminate lock contention)
+std::list<std::shared_ptr<JobResult>> s_job_result_list_hw;
+std::list<std::shared_ptr<JobResult>> s_job_result_list_sw;
 
 // Atomic job ID for cross-thread work cancellation (proper memory barriers)
 static std::atomic<uint8_t> s_working_current_job_id{0xFF};
@@ -266,14 +272,19 @@ struct Submission
 
 static void MiningJobStop(uint32_t &job_pool, std::map<uint32_t, std::shared_ptr<Submission>> &submission_map)
 {
+  // Clear HW lists with mutex (Core 0 ↔ Core 1 sync required)
+  #ifdef HARDWARE_SHA256
   {
-    std::lock_guard<std::mutex> lock(s_job_mutex);
-    s_job_result_list.clear();
-    s_job_request_list_sw.clear();
-    #ifdef HARDWARE_SHA256
+    std::lock_guard<std::mutex> lock(s_job_mutex_hw);
+    s_job_result_list_hw.clear();
     s_job_request_list_hw.clear();
-    #endif
   }
+  #endif
+
+  // Clear SW lists without mutex (same core as Stratum worker)
+  s_job_result_list_sw.clear();
+  s_job_request_list_sw.clear();
+
   s_working_current_job_id.store(0xFF, std::memory_order_release);
   job_pool = 0xFFFFFFFF;
 
@@ -446,13 +457,14 @@ void runStratumWorker(void *name)
                                           
 
                                           // Clear job lists to prevent stale work
+                                          // SW: direct access (same core), HW: mutex required (different core)
+                                          s_job_request_list_sw.clear();
+                                          #ifdef HARDWARE_SHA256
                                           {
-                                            std::lock_guard<std::mutex> lock(s_job_mutex);
-                                            s_job_request_list_sw.clear();
-                                            #ifdef HARDWARE_SHA256
+                                            std::lock_guard<std::mutex> lock(s_job_mutex_hw);
                                             s_job_request_list_hw.clear();
-                                            #endif
                                           }
+                                          #endif
                                           //Increse templates readed
                                           templates.fetch_add(1, std::memory_order_relaxed);
                                           job_pool++;
@@ -523,14 +535,16 @@ void runStratumWorker(void *name)
                                             #endif
                                           }
 
-                                          // Quick batch insert under lock
+                                          // Insert SW jobs directly (same core - no mutex needed)
+                                          s_job_request_list_sw.splice(s_job_request_list_sw.end(), new_sw_jobs);
+
+                                          // Insert HW jobs with mutex (Core 0 ↔ Core 1 sync)
+                                          #ifdef HARDWARE_SHA256
                                           {
-                                            std::lock_guard<std::mutex> lock(s_job_mutex);
-                                            s_job_request_list_sw.splice(s_job_request_list_sw.end(), new_sw_jobs);
-                                            #ifdef HARDWARE_SHA256
+                                            std::lock_guard<std::mutex> lock(s_job_mutex_hw);
                                             s_job_request_list_hw.splice(s_job_request_list_hw.end(), new_hw_jobs);
-                                            #endif
                                           }
+                                          #endif
                                       } 
                                       else
                                       {
@@ -605,14 +619,17 @@ void runStratumWorker(void *name)
       #endif
 
       size_t current_sw_size, current_hw_size = 0;
+
+      // Check SW queue size directly (same core - no mutex needed)
+      current_sw_size = s_job_request_list_sw.size();
+
+      // Check HW queue size with mutex (Core 0 ↔ Core 1 sync)
+      #ifdef HARDWARE_SHA256
       {
-        // Quick check of queue sizes
-        std::lock_guard<std::mutex> lock(s_job_mutex);
-        current_sw_size = s_job_request_list_sw.size();
-        #ifdef HARDWARE_SHA256
+        std::lock_guard<std::mutex> lock(s_job_mutex_hw);
         current_hw_size = s_job_request_list_hw.size();
-        #endif
       }
+      #endif
 
       // Incremental refill SW: Create jobs outside lock
       constexpr size_t REFILL_THRESHOLD_SW = JOB_QUEUE_SIZE / 2;
@@ -649,21 +666,27 @@ void runStratumWorker(void *name)
       }
       #endif
 
-      // Fast insertion under lock using splice
-      {
-        std::lock_guard<std::mutex> lock(s_job_mutex);
-        job_result_list.insert(job_result_list.end(), s_job_result_list.begin(), s_job_result_list.end());
-        s_job_result_list.clear();
+      // Collect SW results directly (same core - no mutex needed)
+      job_result_list.insert(job_result_list.end(), s_job_result_list_sw.begin(), s_job_result_list_sw.end());
+      s_job_result_list_sw.clear();
 
-        if (!new_jobs_sw.empty()) {
-          s_job_request_list_sw.splice(s_job_request_list_sw.end(), new_jobs_sw);
-        }
-        #ifdef HARDWARE_SHA256
+      // Insert SW refill jobs directly (same core - no mutex needed)
+      if (!new_jobs_sw.empty()) {
+        s_job_request_list_sw.splice(s_job_request_list_sw.end(), new_jobs_sw);
+      }
+
+      // Collect HW results and insert HW refill jobs with mutex (Core 0 ↔ Core 1 sync)
+      #ifdef HARDWARE_SHA256
+      {
+        std::lock_guard<std::mutex> lock(s_job_mutex_hw);
+        job_result_list.insert(job_result_list.end(), s_job_result_list_hw.begin(), s_job_result_list_hw.end());
+        s_job_result_list_hw.clear();
+
         if (!new_jobs_hw.empty()) {
           s_job_request_list_hw.splice(s_job_request_list_hw.end(), new_jobs_hw);
         }
-        #endif
       }
+      #endif
     }
 
     // Batch atomic hash updates: accumulate locally, update once at end
@@ -744,25 +767,23 @@ void minerWorkerSw(void * task_id)
   uint32_t wdt_counter = 0;
   while (1)
   {
+    // No mutex needed - SW miner and Stratum worker are on same core (Core 1)
+    if (result)
     {
-      std::lock_guard<std::mutex> lock(s_job_mutex);
-      if (result)
+      if (s_job_result_list_sw.size() < RESULT_LIST_SIZE)
       {
-        if (s_job_result_list.size() < RESULT_LIST_SIZE) 
-        {
-            s_job_result_list.push_back(result);
-            // DEBUG_SERIAL_PRINTF("[RESULT] ✅ Diff: %.8f | Nonce: %u | Stored (%u/%u)\n", result->difficulty, result->nonce, (unsigned)s_job_result_list.size(), RESULT_LIST_SIZE);
-        }
-
-        result.reset();
+          s_job_result_list_sw.push_back(result);
+          // DEBUG_SERIAL_PRINTF("[RESULT] ✅ Diff: %.8f | Nonce: %u | Stored (%u/%u)\n", result->difficulty, result->nonce, (unsigned)s_job_result_list_sw.size(), RESULT_LIST_SIZE);
       }
-      if (!s_job_request_list_sw.empty())
-      {
-        job = s_job_request_list_sw.front();
-        s_job_request_list_sw.pop_front();
-      } else
-        job.reset();
+
+      result.reset();
     }
+    if (!s_job_request_list_sw.empty())
+    {
+      job = s_job_request_list_sw.front();
+      s_job_request_list_sw.pop_front();
+    } else
+      job.reset();
     if (job)
     {
       result = std::make_shared<JobResult>();
@@ -777,29 +798,46 @@ void minerWorkerSw(void * task_id)
       strncpy(result->ntime, job->ntime, sizeof(result->ntime) - 1);
       strncpy(result->extranonce2, job->extranonce2, sizeof(result->extranonce2) - 1);
       uint8_t job_in_work = job->id & 0xFF;
-      for (uint32_t n = 0; n < job->nonce_count; ++n)
+
+      // Batch processing: Process BATCH_SW_SIZE nonces before checking job cancellation
+      uint32_t n = 0;
+      bool job_cancelled = false;
+
+      while (n < job->nonce_count && !job_cancelled)
       {
-        uint32_t nonce = job->nonce_start + n;
-        if (nerd_sha256d_baked_nonce(job->midstate, job->bake, __builtin_bswap32(nonce), hash))
+        // Calculate batch boundaries
+        uint32_t batch_end = n + BATCH_SW_SIZE;
+        if (batch_end > job->nonce_count) batch_end = job->nonce_count;
+
+        // Process one batch of nonces
+        for (uint32_t batch_n = n; batch_n < batch_end; ++batch_n)
         {
-          if (__builtin_expect(isSha256Valid(hash) && hash_is_better(hash, result->best_hash), 1))
+          uint32_t nonce = job->nonce_start + batch_n;
+          if (nerd_sha256d_baked_nonce(job->midstate, job->bake, __builtin_bswap32(nonce), hash))
           {
-            result->difficulty = diff_from_target(hash);
-            result->nonce = nonce;
-            memcpy(result->hash, hash, 32);
-            memcpy(result->best_hash, hash, 32);
+            if (__builtin_expect(isSha256Valid(hash) && hash_is_better(hash, result->best_hash), 1))
+            {
+              result->difficulty = diff_from_target(hash);
+              result->nonce = nonce;
+              memcpy(result->hash, hash, 32);
+              memcpy(result->best_hash, hash, 32);
+            }
           }
         }
-        if ((uint16_t)(n & 0xFF) == 0)
+
+        // Update nonce counter after batch completion
+        n = batch_end;
+
+        // Check for job cancellation after each batch
+        // Single atomic load per batch reduces overhead
+        uint8_t current_job_id = s_working_current_job_id.load(std::memory_order_relaxed);
+        if (__builtin_expect(current_job_id != job_in_work, 0))
         {
-          if (s_working_current_job_id.load(std::memory_order_acquire) != job_in_work)
-          {
-            result->nonce_count = n+1;
-            break;
-          }
+          result->nonce_count = n;
+          job_cancelled = true;
         }
       }
-    } 
+    }
     else
       vTaskDelay(2 / portTICK_PERIOD_MS);
 
@@ -1017,11 +1055,11 @@ __attribute__((hot, optimize("Ofast"))) void minerWorkerHw(void * task_id)
   while (1)
   {
     {
-      std::lock_guard<std::mutex> lock(s_job_mutex);
+      std::lock_guard<std::mutex> lock(s_job_mutex_hw);
       if (result)
       {
-        if (s_job_result_list.size() < RESULT_LIST_SIZE)
-          s_job_result_list.push_back(result);
+        if (s_job_result_list_hw.size() < RESULT_LIST_SIZE)
+          s_job_result_list_hw.push_back(result);
         result.reset();
       }
       if (!s_job_request_list_hw.empty())
@@ -1060,71 +1098,83 @@ __attribute__((hot, optimize("Ofast"))) void minerWorkerHw(void * task_id)
       uint8_t local_job_in_work = job_in_work;
       uint8_t current_job_id;
 
-      for (uint32_t n = job->nonce_start; n < nend; ++n)
+      // Batch processing: Process BATCH_HW_SIZE nonces before checking job cancellation
+      uint32_t n = job->nonce_start;
+      bool job_cancelled = false;
+
+      while (n < nend && !job_cancelled)
       {
-        // Optimized SHA operation sequence - removed redundant waits
-        nerd_sha_ll_write_digest(digest_mid);
-        nerd_sha_ll_fill_text_block_sha256(sha_buffer, n);
-        REG_WRITE(SHA_CONTINUE_REG, 1);
-        sha_ll_load(SHA2_256);
+        // Calculate batch boundaries
+        uint32_t batch_end = n + BATCH_HW_SIZE;
+        if (batch_end > nend) batch_end = nend;
 
-        // Wait for first round with likely success hint
-        if (__builtin_expect(!nerd_sha_hal_wait_idle(), 0)) {
-          DEBUG_SERIAL_PRINTF("[SHA_HW] Timeout at nonce 0x%08X (job %u, round 1, worker %u)\n",
-                              n, job->id, miner_id);
-          nerd_sha_hw_reset();
-          result->nonces_skipped++;
-          continue;
-        }
-
-        nerd_sha_ll_fill_text_block_sha256_inter();
-        REG_WRITE(SHA_START_REG, 1);
-        sha_ll_load(SHA2_256);
-
-        // Wait for second round with likely success hint
-        if (__builtin_expect(!nerd_sha_hal_wait_idle(), 0)) {
-          DEBUG_SERIAL_PRINTF("[SHA_HW] Timeout at nonce 0x%08X (job %u, round 2, worker %u)\n",
-                              n, job->id, miner_id);
-          nerd_sha_hw_reset();
-          result->nonces_skipped++;
-          continue;
-        }
-
-        // Early exit hash check - only processes promising results
-        if (__builtin_expect(nerd_sha_ll_read_digest_if(hash), 0))
+        // Process one batch of nonces
+        for (uint32_t batch_n = n; batch_n < batch_end; ++batch_n)
         {
-#ifdef VALIDATION
-          // Validation (debug only)
-          nerd_sha256d_baked_nonce(diget_mid, bake, __builtin_bswap32(n), doubleHash);
-          for (int i = 0; i < 32; ++i)
+          // Optimized SHA operation sequence - removed redundant waits
+          nerd_sha_ll_write_digest(digest_mid);
+          nerd_sha_ll_fill_text_block_sha256(sha_buffer, batch_n);
+          REG_WRITE(SHA_CONTINUE_REG, 1);
+          sha_ll_load(SHA2_256);
+
+          // Wait for first round with likely success hint
+          if (__builtin_expect(!nerd_sha_hal_wait_idle(), 0)) {
+            DEBUG_SERIAL_PRINTF("[SHA_HW] Timeout at nonce 0x%08X (job %u, round 1, worker %u)\n",
+                                batch_n, job->id, miner_id);
+            nerd_sha_hw_reset();
+            result->nonces_skipped++;
+            continue;
+          }
+
+          nerd_sha_ll_fill_text_block_sha256_inter();
+          REG_WRITE(SHA_START_REG, 1);
+          sha_ll_load(SHA2_256);
+
+          // Wait for second round with likely success hint
+          if (__builtin_expect(!nerd_sha_hal_wait_idle(), 0)) {
+            DEBUG_SERIAL_PRINTF("[SHA_HW] Timeout at nonce 0x%08X (job %u, round 2, worker %u)\n",
+                                batch_n, job->id, miner_id);
+            nerd_sha_hw_reset();
+            result->nonces_skipped++;
+            continue;
+          }
+
+          // Early exit hash check - only processes promising results
+          if (__builtin_expect(nerd_sha_ll_read_digest_if(hash), 0))
           {
-            if (hash[i] != doubleHash[i])
+#ifdef VALIDATION
+            // Validation (debug only)
+            nerd_sha256d_baked_nonce(diget_mid, bake, __builtin_bswap32(batch_n), doubleHash);
+            for (int i = 0; i < 32; ++i)
             {
-              DEBUG_SERIAL_PRINTLN("***HW sha256 esp32s3 bug detected***");
-              break;
+              if (hash[i] != doubleHash[i])
+              {
+                DEBUG_SERIAL_PRINTLN("***HW sha256 esp32s3 bug detected***");
+                break;
+              }
+            }
+#endif
+            // Valid candidate found - process it
+            if (__builtin_expect(isSha256Valid(hash) && hash_is_better(hash, result->best_hash), 1))
+            {
+              result->difficulty = diff_from_target(hash);
+              result->nonce = batch_n;
+              memcpy(result->hash, hash, sizeof(hash));
+              memcpy(result->best_hash, hash, sizeof(hash));
             }
           }
-#endif
-          // Valid candidate found - process it
-          if (__builtin_expect(isSha256Valid(hash) && hash_is_better(hash, result->best_hash), 1))
-          {
-            result->difficulty = diff_from_target(hash);
-            result->nonce = n;
-            memcpy(result->hash, hash, sizeof(hash));
-            memcpy(result->best_hash, hash, sizeof(hash));
-          }
         }
 
-        // Check for job cancellation at configured frequency
-        // Reduces atomic load overhead while maintaining responsiveness
-        if (__builtin_expect((n & JOB_CANCELLATION_CHECK_MASK) == 0, 0))
+        // Update nonce counter after batch completion
+        n = batch_end;
+
+        // Check for job cancellation after each batch
+        // Single atomic load per batch reduces overhead
+        current_job_id = s_working_current_job_id.load(std::memory_order_relaxed);
+        if (__builtin_expect(current_job_id != local_job_in_work, 0))
         {
-          current_job_id = s_working_current_job_id.load(std::memory_order_acquire);
-          if (__builtin_expect(current_job_id != local_job_in_work, 0))
-          {
-            result->nonce_count = n - job->nonce_start + 1;
-            break;
-          }
+          result->nonce_count = n - job->nonce_start;
+          job_cancelled = true;
         }
       }
       esp_sha_release_hardware();
@@ -1284,11 +1334,11 @@ void minerWorkerHw(void * task_id)
   while (1)
   {
     {
-      std::lock_guard<std::mutex> lock(s_job_mutex);
+      std::lock_guard<std::mutex> lock(s_job_mutex_hw);
       if (result)
       {
-        if (s_job_result_list.size() < RESULT_LIST_SIZE)
-          s_job_result_list.push_back(result);
+        if (s_job_result_list_hw.size() < RESULT_LIST_SIZE)
+          s_job_result_list_hw.push_back(result);
         result.reset();
       }
       if (!s_job_request_list_hw.empty())
@@ -1315,78 +1365,94 @@ void minerWorkerHw(void * task_id)
       memcpy(sha_buffer, job->sha_buffer, 80);
       uint8_t current_job_id;
 
+      // Batch processing: Process BATCH_HW_SIZE nonces before checking job cancellation
+      uint32_t n = 0;
+      bool job_cancelled = false;
+
       esp_sha_lock_engine(SHA2_256);
-      for (uint32_t n = 0; n < job->nonce_count; ++n)
+
+      while (n < job->nonce_count && !job_cancelled)
       {
-        //((uint32_t*)(sha_buffer+64+12))[0] = __builtin_bswap32(job->nonce_start+n);
+        // Calculate batch boundaries
+        uint32_t batch_end = n + BATCH_HW_SIZE;
+        if (batch_end > job->nonce_count) batch_end = job->nonce_count;
 
-        //sha_hal_hash_block(SHA2_256, s_test_buffer, 64/4, true);
-        //nerd_sha_hal_wait_idle();
-        nerd_sha_ll_fill_text_block_sha256(sha_buffer);
-        sha_ll_start_block(SHA2_256);
-
-        //sha_hal_hash_block(SHA2_256, s_test_buffer+64, 64/4, false);
-        if (!nerd_sha_hal_wait_idle()) {
-          // Reset SHA hardware to known state after timeout
-          DEBUG_SERIAL_PRINTF("[SHA_HW_ESP32] Timeout at nonce 0x%08X (job %u, stage 1, worker %u)\n",
-                              job->nonce_start+n, job->id, miner_id);
-          nerd_sha_hw_reset();
-          result->nonces_skipped++;
-          continue;
-        }
-        nerd_sha_ll_fill_text_block_sha256_upper(sha_buffer+64, job->nonce_start+n);
-        sha_ll_continue_block(SHA2_256);
-
-        if (!nerd_sha_hal_wait_idle()) {
-          // Reset SHA hardware to known state after timeout
-          DEBUG_SERIAL_PRINTF("[SHA_HW_ESP32] Timeout at nonce 0x%08X (job %u, stage 2, worker %u)\n",
-                              job->nonce_start+n, job->id, miner_id);
-          nerd_sha_hw_reset();
-          result->nonces_skipped++;
-          continue;
-        }
-        sha_ll_load(SHA2_256);
-
-        //sha_hal_hash_block(SHA2_256, interResult, 64/4, true);
-        if (!nerd_sha_hal_wait_idle()) {
-          // Reset SHA hardware to known state after timeout
-          DEBUG_SERIAL_PRINTF("[SHA_HW_ESP32] Timeout at nonce 0x%08X (job %u, stage 3, worker %u)\n",
-                              job->nonce_start+n, job->id, miner_id);
-          nerd_sha_hw_reset();
-          result->nonces_skipped++;
-          continue;
-        }
-        nerd_sha_ll_fill_text_block_sha256_double();
-        sha_ll_start_block(SHA2_256);
-
-        if (!nerd_sha_hal_wait_idle()) {
-          // Reset SHA hardware to known state after timeout
-          DEBUG_SERIAL_PRINTF("[SHA_HW_ESP32] Timeout at nonce 0x%08X (job %u, stage 4, worker %u)\n",
-                              job->nonce_start+n, job->id, miner_id);
-          nerd_sha_hw_reset();
-          result->nonces_skipped++;
-          continue;
-        }
-        sha_ll_load(SHA2_256);
-        if (nerd_sha_ll_read_digest_swap_if(hash))
+        // Process one batch of nonces
+        for (uint32_t batch_n = n; batch_n < batch_end; ++batch_n)
         {
-          //~5 per second
-          if (__builtin_expect(isSha256Valid(hash) && hash_is_better(hash, result->best_hash), 1))
+          //((uint32_t*)(sha_buffer+64+12))[0] = __builtin_bswap32(job->nonce_start+batch_n);
+
+          //sha_hal_hash_block(SHA2_256, s_test_buffer, 64/4, true);
+          //nerd_sha_hal_wait_idle();
+          nerd_sha_ll_fill_text_block_sha256(sha_buffer);
+          sha_ll_start_block(SHA2_256);
+
+          //sha_hal_hash_block(SHA2_256, s_test_buffer+64, 64/4, false);
+          if (!nerd_sha_hal_wait_idle()) {
+            // Reset SHA hardware to known state after timeout
+            DEBUG_SERIAL_PRINTF("[SHA_HW_ESP32] Timeout at nonce 0x%08X (job %u, stage 1, worker %u)\n",
+                                job->nonce_start+batch_n, job->id, miner_id);
+            nerd_sha_hw_reset();
+            result->nonces_skipped++;
+            continue;
+          }
+          nerd_sha_ll_fill_text_block_sha256_upper(sha_buffer+64, job->nonce_start+batch_n);
+          sha_ll_continue_block(SHA2_256);
+
+          if (!nerd_sha_hal_wait_idle()) {
+            // Reset SHA hardware to known state after timeout
+            DEBUG_SERIAL_PRINTF("[SHA_HW_ESP32] Timeout at nonce 0x%08X (job %u, stage 2, worker %u)\n",
+                                job->nonce_start+batch_n, job->id, miner_id);
+            nerd_sha_hw_reset();
+            result->nonces_skipped++;
+            continue;
+          }
+          sha_ll_load(SHA2_256);
+
+          //sha_hal_hash_block(SHA2_256, interResult, 64/4, true);
+          if (!nerd_sha_hal_wait_idle()) {
+            // Reset SHA hardware to known state after timeout
+            DEBUG_SERIAL_PRINTF("[SHA_HW_ESP32] Timeout at nonce 0x%08X (job %u, stage 3, worker %u)\n",
+                                job->nonce_start+batch_n, job->id, miner_id);
+            nerd_sha_hw_reset();
+            result->nonces_skipped++;
+            continue;
+          }
+          nerd_sha_ll_fill_text_block_sha256_double();
+          sha_ll_start_block(SHA2_256);
+
+          if (!nerd_sha_hal_wait_idle()) {
+            // Reset SHA hardware to known state after timeout
+            DEBUG_SERIAL_PRINTF("[SHA_HW_ESP32] Timeout at nonce 0x%08X (job %u, stage 4, worker %u)\n",
+                                job->nonce_start+batch_n, job->id, miner_id);
+            nerd_sha_hw_reset();
+            result->nonces_skipped++;
+            continue;
+          }
+          sha_ll_load(SHA2_256);
+          if (nerd_sha_ll_read_digest_swap_if(hash))
           {
-            result->difficulty = diff_from_target(hash);
-            result->nonce = job->nonce_start+n;
-            memcpy(result->hash, hash, sizeof(hash));
-            memcpy(result->best_hash, hash, sizeof(hash));
+            //~5 per second
+            if (__builtin_expect(isSha256Valid(hash) && hash_is_better(hash, result->best_hash), 1))
+            {
+              result->difficulty = diff_from_target(hash);
+              result->nonce = job->nonce_start+batch_n;
+              memcpy(result->hash, hash, sizeof(hash));
+              memcpy(result->best_hash, hash, sizeof(hash));
+            }
           }
         }
-        if (__builtin_expect((n & JOB_CANCELLATION_CHECK_MASK) == 0, 0))
+
+        // Update nonce counter after batch completion
+        n = batch_end;
+
+        // Check for job cancellation after each batch
+        // Single atomic load per batch reduces overhead
+        current_job_id = s_working_current_job_id.load(std::memory_order_relaxed);
+        if (__builtin_expect(current_job_id != job_in_work, 0))
         {
-          current_job_id = s_working_current_job_id.load(std::memory_order_acquire);
-          if (__builtin_expect(current_job_id != job_in_work, 0))
-          {
-            result->nonce_count = n + 1;
-            break;
-          }
+          result->nonce_count = n;
+          job_cancelled = true;
         }
       }
       esp_sha_unlock_engine(SHA2_256);
