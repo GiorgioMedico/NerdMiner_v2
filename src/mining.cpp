@@ -682,11 +682,19 @@ void runStratumWorker(void *name)
     // Batch atomic hash updates: accumulate locally, update once at end
     uint32_t total_hashes_processed = 0;
 
-    // Convert current pool difficulty to target for precise comparison
-    uint8_t pool_target[32];
-    if (!difficulty_to_target(currentPoolDifficulty, pool_target)) {
-        memset(pool_target, 0xFF, 32);  // Fallback to max target if conversion fails
+    // Cache difficulty->target conversion (only recalculate when difficulty changes)
+    static double cached_difficulty = -1.0;
+    static uint8_t cached_pool_target[32];
+
+    if (currentPoolDifficulty != cached_difficulty) {
+        if (!difficulty_to_target(currentPoolDifficulty, cached_pool_target)) {
+            memset(cached_pool_target, 0xFF, 32);  // Fallback to max target if conversion fails
+        }
+        cached_difficulty = currentPoolDifficulty;
     }
+
+    // Use cached target for validation
+    uint8_t* pool_target = cached_pool_target;
 
     while (!job_result_list.empty())
     {
